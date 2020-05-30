@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package source
+package crd
 
 import (
 	"fmt"
@@ -33,6 +33,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"sigs.k8s.io/external-dns/endpoint"
+	"sigs.k8s.io/external-dns/source"
 )
 
 // crdSource is an implementation of Source that provides endpoints by listing
@@ -102,7 +103,7 @@ func NewCRDClientForAPIVersionKind(client kubernetes.Interface, kubeConfig, kube
 }
 
 // NewCRDSource creates a new crdSource with the given config.
-func NewCRDSource(crdClient rest.Interface, namespace, kind string, annotationFilter string, scheme *runtime.Scheme) (Source, error) {
+func NewCRDSource(crdClient rest.Interface, namespace, kind string, annotationFilter string, scheme *runtime.Scheme) (source.Source, error) {
 	return &crdSource{
 		crdResource:      strings.ToLower(kind) + "s",
 		namespace:        namespace,

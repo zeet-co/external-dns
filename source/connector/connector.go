@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package source
+package connector
 
 import (
 	"encoding/gob"
@@ -24,6 +24,7 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"sigs.k8s.io/external-dns/endpoint"
+	"sigs.k8s.io/external-dns/source"
 )
 
 const (
@@ -37,7 +38,7 @@ type connectorSource struct {
 }
 
 // NewConnectorSource creates a new connectorSource with the given config.
-func NewConnectorSource(remoteServer string) (Source, error) {
+func NewConnectorSource(remoteServer string) (source.Source, error) {
 	return &connectorSource{
 		remoteServer: remoteServer,
 	}, nil

@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package source
+package ocproute
 
 import (
 	"bytes"
@@ -35,6 +35,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 
 	"sigs.k8s.io/external-dns/endpoint"
+	"sigs.k8s.io/external-dns/source"
 )
 
 // ocpRouteSource is an implementation of Source for OpenShift Route objects.
@@ -59,7 +60,7 @@ func NewOcpRouteSource(
 	fqdnTemplate string,
 	combineFQDNAnnotation bool,
 	ignoreHostnameAnnotation bool,
-) (Source, error) {
+) (source.Source, error) {
 	var (
 		tmpl *template.Template
 		err  error
@@ -90,7 +91,7 @@ func NewOcpRouteSource(
 	informerFactory.Start(wait.NeverStop)
 
 	// wait for the local cache to be populated.
-	err = poll(time.Second, 60*time.Second, func() (bool, error) {
+	err = source.Poll(time.Second, 60*time.Second, func() (bool, error) {
 		return routeInformer.Informer().HasSynced(), nil
 	})
 	if err != nil {
@@ -130,9 +131,9 @@ func (ors *ocpRouteSource) Endpoints() ([]*endpoint.Endpoint, error) {
 	for _, ocpRoute := range ocpRoutes {
 		// Check controller annotation to see if we are responsible.
 		controller, ok := ocpRoute.Annotations[source.ControllerAnnotationKey]
-		if ok && controller != controllerAnnotationValue {
+		if ok && controller != source.ControllerAnnotationValue {
 			log.Debugf("Skipping OpenShift Route %s/%s because controller value does not match, found: %s, required: %s",
-				ocpRoute.Namespace, ocpRoute.Name, controller, controllerAnnotationValue)
+				ocpRoute.Namespace, ocpRoute.Name, controller, source.ControllerAnnotationValue)
 			continue
 		}
 
@@ -179,25 +180,25 @@ func (ors *ocpRouteSource) endpointsFromTemplate(ocpRoute *routeapi.Route) ([]*e
 
 	hostnames := buf.String()
 
-	ttl, err := getTTLFromAnnotations(ocpRoute.Annotations)
+	ttl, err := source.GetTTLFromAnnotations(ocpRoute.Annotations)
 	if err != nil {
 		log.Warn(err)
 	}
 
-	targets := getTargetsFromTargetAnnotation(ocpRoute.Annotations)
+	targets := source.GetTargetsFromTargetAnnotation(ocpRoute.Annotations)
 
 	if len(targets) == 0 {
 		targets = targetsFromOcpRouteStatus(ocpRoute.Status)
 	}
 
-	providerSpecific, setIdentifier := getProviderSpecificAnnotations(ocpRoute.Annotations)
+	providerSpecific, setIdentifier := source.GetProviderSpecificAnnotations(ocpRoute.Annotations)
 
 	var endpoints []*endpoint.Endpoint
 	// splits the FQDN template and removes the trailing periods
 	hostnameList := strings.Split(strings.Replace(hostnames, " ", "", -1), ",")
 	for _, hostname := range hostnameList {
 		hostname = strings.TrimSuffix(hostname, ".")
-		endpoints = append(endpoints, endpointsForHostname(hostname, targets, ttl, providerSpecific, setIdentifier)...)
+		endpoints = append(endpoints, source.EndpointsForHostname(hostname, targets, ttl, providerSpecific, setIdentifier)...)
 	}
 	return endpoints, nil
 }
@@ -242,28 +243,28 @@ func (ors *ocpRouteSource) setResourceLabel(ocpRoute *routeapi.Route, endpoints 
 func endpointsFromOcpRoute(ocpRoute *routeapi.Route, ignoreHostnameAnnotation bool) []*endpoint.Endpoint {
 	var endpoints []*endpoint.Endpoint
 
-	ttl, err := getTTLFromAnnotations(ocpRoute.Annotations)
+	ttl, err := source.GetTTLFromAnnotations(ocpRoute.Annotations)
 	if err != nil {
 		log.Warn(err)
 	}
 
-	targets := getTargetsFromTargetAnnotation(ocpRoute.Annotations)
+	targets := source.GetTargetsFromTargetAnnotation(ocpRoute.Annotations)
 
 	if len(targets) == 0 {
 		targets = targetsFromOcpRouteStatus(ocpRoute.Status)
 	}
 
-	providerSpecific, setIdentifier := getProviderSpecificAnnotations(ocpRoute.Annotations)
+	providerSpecific, setIdentifier := source.GetProviderSpecificAnnotations(ocpRoute.Annotations)
 
 	if host := ocpRoute.Spec.Host; host != "" {
-		endpoints = append(endpoints, endpointsForHostname(host, targets, ttl, providerSpecific, setIdentifier)...)
+		endpoints = append(endpoints, source.EndpointsForHostname(host, targets, ttl, providerSpecific, setIdentifier)...)
 	}
 
 	// Skip endpoints if we do not want entries from annotations
 	if !ignoreHostnameAnnotation {
-		hostnameList := getHostnamesFromAnnotations(ocpRoute.Annotations)
+		hostnameList := source.GetHostnamesFromAnnotations(ocpRoute.Annotations)
 		for _, hostname := range hostnameList {
-			endpoints = append(endpoints, endpointsForHostname(hostname, targets, ttl, providerSpecific, setIdentifier)...)
+			endpoints = append(endpoints, source.EndpointsForHostname(hostname, targets, ttl, providerSpecific, setIdentifier)...)
 		}
 	}
 	return endpoints
