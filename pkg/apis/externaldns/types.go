@@ -24,7 +24,7 @@ import (
 
 	"github.com/alecthomas/kingpin"
 	"github.com/sirupsen/logrus"
-	"sigs.k8s.io/external-dns/source"
+	"sigs.k8s.io/external-dns/source/routegroup"
 )
 
 const (
@@ -292,7 +292,7 @@ func (cfg *Config) ParseFlags(args []string) error {
 	app.Flag("contour-load-balancer", "The fully-qualified name of the Contour load balancer service. (default: heptio-contour/contour)").Default("heptio-contour/contour").StringVar(&cfg.ContourLoadBalancerService)
 
 	// Flags related to Skipper RouteGroup
-	app.Flag("skipper-routegroup-groupversion", "The resource version for skipper routegroup").Default(source.DefaultRoutegroupVersion).StringVar(&cfg.SkipperRouteGroupVersion)
+	app.Flag("skipper-routegroup-groupversion", "The resource version for skipper routegroup").Default(routegroup.DefaultRoutegroupVersion).StringVar(&cfg.SkipperRouteGroupVersion)
 
 	// Flags related to processing sources
 	app.Flag("source", "The resource types that are queried for endpoints; specify multiple times for multiple sources (required, options: service, ingress, node, fake, connector, istio-gateway, cloudfoundry, contour-ingressroute, crd, empty, skipper-routegroup,openshift-route)").Required().PlaceHolder("source").EnumsVar(&cfg.Sources, "service", "ingress", "node", "istio-gateway", "cloudfoundry", "contour-ingressroute", "fake", "connector", "crd", "empty", "skipper-routegroup", "openshift-route")

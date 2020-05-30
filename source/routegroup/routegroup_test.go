@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package source
+package routegroup
 
 import (
 	"testing"
@@ -659,7 +659,7 @@ func TestRouteGroupsEndpoints(t *testing.T) {
 								"namespace1",
 								"rg1",
 								map[string]string{
-									controllerAnnotationKey: controllerAnnotationValue,
+									source.ControllerAnnotationKey: controllerAnnotationValue,
 								},
 								[]string{"rg1.k8s.example"},
 								[]routeGroupLoadBalancer{
@@ -672,7 +672,7 @@ func TestRouteGroupsEndpoints(t *testing.T) {
 								"namespace1",
 								"rg2",
 								map[string]string{
-									controllerAnnotationKey: "dns",
+									source.ControllerAnnotationKey: "dns",
 								},
 								[]string{"rg2.k8s.example"},
 								[]routeGroupLoadBalancer{

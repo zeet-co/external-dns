@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package source
+package service
 
 import (
 	"net"
@@ -483,8 +483,8 @@ func testServiceSourceEndpoints(t *testing.T) {
 			false,
 			map[string]string{},
 			map[string]string{
-				controllerAnnotationKey: controllerAnnotationValue,
-				hostnameAnnotationKey:   "foo.example.org.",
+				source.ControllerAnnotationKey: controllerAnnotationValue,
+				hostnameAnnotationKey:          "foo.example.org.",
 			},
 			"",
 			[]string{"1.2.3.4"},
@@ -507,8 +507,8 @@ func testServiceSourceEndpoints(t *testing.T) {
 			false,
 			map[string]string{},
 			map[string]string{
-				controllerAnnotationKey: "some-other-tool",
-				hostnameAnnotationKey:   "foo.example.org.",
+				source.ControllerAnnotationKey: "some-other-tool",
+				hostnameAnnotationKey:          "foo.example.org.",
 			},
 			"",
 			[]string{"1.2.3.4"},

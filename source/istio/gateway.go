@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package source
+package istio
 
 import (
 	"bytes"
@@ -36,6 +36,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 
 	"sigs.k8s.io/external-dns/endpoint"
+	"sigs.k8s.io/external-dns/source"
 )
 
 // gatewaySource is an implementation of Source for Istio Gateway objects.
@@ -61,7 +62,7 @@ func NewIstioGatewaySource(
 	fqdnTemplate string,
 	combineFqdnAnnotation bool,
 	ignoreHostnameAnnotation bool,
-) (Source, error) {
+) (source.Source, error) {
 	var (
 		tmpl *template.Template
 		err  error
@@ -94,7 +95,7 @@ func NewIstioGatewaySource(
 	informerFactory.Start(wait.NeverStop)
 
 	// wait for the local cache to be populated.
-	err = poll(time.Second, 60*time.Second, func() (bool, error) {
+	err = source.Poll(time.Second, 60*time.Second, func() (bool, error) {
 		return serviceInformer.Informer().HasSynced(), nil
 	})
 	if err != nil {
@@ -131,10 +132,10 @@ func (sc *gatewaySource) Endpoints() ([]*endpoint.Endpoint, error) {
 
 	for _, gateway := range gateways {
 		// Check controller annotation to see if we are responsible.
-		controller, ok := gateway.Annotations[controllerAnnotationKey]
-		if ok && controller != controllerAnnotationValue {
+		controller, ok := gateway.Annotations[source.ControllerAnnotationKey]
+		if ok && controller != source.ControllerAnnotationValue {
 			log.Debugf("Skipping gateway %s/%s because controller value does not match, found: %s, required: %s",
-				gateway.Namespace, gateway.Name, controller, controllerAnnotationValue)
+				gateway.Namespace, gateway.Name, controller, source.ControllerAnnotationValue)
 			continue
 		}
 
@@ -187,12 +188,12 @@ func (sc *gatewaySource) endpointsFromTemplate2(gateway networkingv1alpha3.Gatew
 
 	hostnames := buf.String()
 
-	ttl, err := getTTLFromAnnotations(gateway.Annotations)
+	ttl, err := source.GetTTLFromAnnotations(gateway.Annotations)
 	if err != nil {
 		log.Warn(err)
 	}
 
-	targets := getTargetsFromTargetAnnotation(gateway.Annotations)
+	targets := source.GetTargetsFromTargetAnnotation(gateway.Annotations)
 
 	if len(targets) == 0 {
 		targets, err = sc.targetsFromGatewayConfig(gateway)
@@ -201,14 +202,14 @@ func (sc *gatewaySource) endpointsFromTemplate2(gateway networkingv1alpha3.Gatew
 		}
 	}
 
-	providerSpecific, setIdentifier := getProviderSpecificAnnotations(gateway.Annotations)
+	providerSpecific, setIdentifier := source.GetProviderSpecificAnnotations(gateway.Annotations)
 
 	var endpoints []*endpoint.Endpoint
 	// splits the FQDN template and removes the trailing periods
 	hostnameList := strings.Split(strings.Replace(hostnames, " ", "", -1), ",")
 	for _, hostname := range hostnameList {
 		hostname = strings.TrimSuffix(hostname, ".")
-		endpoints = append(endpoints, endpointsForHostname(hostname, targets, ttl, providerSpecific, setIdentifier)...)
+		endpoints = append(endpoints, source.EndpointsForHostname(hostname, targets, ttl, providerSpecific, setIdentifier)...)
 	}
 	return endpoints, nil
 }
@@ -284,12 +285,12 @@ func (sc *gatewaySource) targetsFromGatewayConfig(gateway networkingv1alpha3.Gat
 func (sc *gatewaySource) endpointsFromGatewayConfig(gateway networkingv1alpha3.Gateway) ([]*endpoint.Endpoint, error) {
 	var endpoints []*endpoint.Endpoint
 
-	ttl, err := getTTLFromAnnotations(gateway.Annotations)
+	ttl, err := source.GetTTLFromAnnotations(gateway.Annotations)
 	if err != nil {
 		log.Warn(err)
 	}
 
-	targets := getTargetsFromTargetAnnotation(gateway.Annotations)
+	targets := source.GetTargetsFromTargetAnnotation(gateway.Annotations)
 
 	if len(targets) == 0 {
 		targets, err = sc.targetsFromGatewayConfig(gateway)
@@ -298,7 +299,7 @@ func (sc *gatewaySource) endpointsFromGatewayConfig(gateway networkingv1alpha3.G
 		}
 	}
 
-	providerSpecific, setIdentifier := getProviderSpecificAnnotations(gateway.Annotations)
+	providerSpecific, setIdentifier := source.GetProviderSpecificAnnotations(gateway.Annotations)
 
 	for _, server := range gateway.Spec.Servers {
 		for _, host := range server.Hosts {
@@ -314,15 +315,15 @@ func (sc *gatewaySource) endpointsFromGatewayConfig(gateway networkingv1alpha3.G
 				host = parts[1]
 			}
 
-			endpoints = append(endpoints, endpointsForHostname(host, targets, ttl, providerSpecific, setIdentifier)...)
+			endpoints = append(endpoints, source.EndpointsForHostname(host, targets, ttl, providerSpecific, setIdentifier)...)
 		}
 	}
 
 	// Skip endpoints if we do not want entries from annotations
 	if !sc.ignoreHostnameAnnotation {
-		hostnameList := getHostnamesFromAnnotations(gateway.Annotations)
+		hostnameList := source.GetHostnamesFromAnnotations(gateway.Annotations)
 		for _, hostname := range hostnameList {
-			endpoints = append(endpoints, endpointsForHostname(hostname, targets, ttl, providerSpecific, setIdentifier)...)
+			endpoints = append(endpoints, source.EndpointsForHostname(hostname, targets, ttl, providerSpecific, setIdentifier)...)
 		}
 	}
 

@@ -129,7 +129,7 @@ func (ors *ocpRouteSource) Endpoints() ([]*endpoint.Endpoint, error) {
 
 	for _, ocpRoute := range ocpRoutes {
 		// Check controller annotation to see if we are responsible.
-		controller, ok := ocpRoute.Annotations[controllerAnnotationKey]
+		controller, ok := ocpRoute.Annotations[source.ControllerAnnotationKey]
 		if ok && controller != controllerAnnotationValue {
 			log.Debugf("Skipping OpenShift Route %s/%s because controller value does not match, found: %s, required: %s",
 				ocpRoute.Namespace, ocpRoute.Name, controller, controllerAnnotationValue)

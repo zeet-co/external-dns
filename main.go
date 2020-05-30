@@ -63,6 +63,7 @@ import (
 	"sigs.k8s.io/external-dns/provider"
 	"sigs.k8s.io/external-dns/registry"
 	"sigs.k8s.io/external-dns/source"
+	"sigs.k8s.io/external-dns/store"
 )
 
 func main() {
@@ -97,7 +98,7 @@ func main() {
 	go handleSigterm(stopChan)
 
 	// Create a source.Config from the flags passed by the user.
-	sourceCfg := &source.Config{
+	sourceCfg := &store.Config{
 		Namespace:                      cfg.Namespace,
 		AnnotationFilter:               cfg.AnnotationFilter,
 		FQDNTemplate:                   cfg.FQDNTemplate,
@@ -123,7 +124,7 @@ func main() {
 	}
 
 	// Lookup all the selected sources by names and pass them the desired configuration.
-	sources, err := source.ByNames(&source.SingletonClientGenerator{
+	sources, err := store.ByNames(&store.SingletonClientGenerator{
 		KubeConfig: cfg.KubeConfig,
 		KubeMaster: cfg.Master,
 		// If update events are enabled, disable timeout.

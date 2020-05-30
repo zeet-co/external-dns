@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package source
+package routegroup
 
 import (
 	"bytes"
@@ -34,6 +34,7 @@ import (
 
 	log "github.com/sirupsen/logrus"
 	"sigs.k8s.io/external-dns/endpoint"
+	"sigs.k8s.io/external-dns/source"
 )
 
 const (
@@ -42,6 +43,10 @@ const (
 	DefaultRoutegroupVersion     = "zalando.org/v1"
 	routeGroupListResource       = "/apis/%s/routegroups"
 	routeGroupNamespacedResource = "/apis/%s/namespaces/%s/routegroups"
+	// ALBDualstackAnnotationKey is the annotation used for determining if an ALB ingress is dualstack
+	ALBDualstackAnnotationKey = "alb.ingress.kubernetes.io/ip-address-type"
+	// ALBDualstackAnnotationValue is the value of the ALB dualstack annotation that indicates it is dualstack
+	ALBDualstackAnnotationValue = "dualstack"
 )
 
 type routeGroupSource struct {
@@ -198,7 +203,7 @@ func parseTemplate(fqdnTemplate string) (tmpl *template.Template, err error) {
 }
 
 // NewRouteGroupSource creates a new routeGroupSource with the given config.
-func NewRouteGroupSource(timeout time.Duration, token, tokenPath, master, namespace, annotationFilter, fqdnTemplate, routegroupVersion string, combineFqdnAnnotation, ignoreHostnameAnnotation bool) (Source, error) {
+func NewRouteGroupSource(timeout time.Duration, token, tokenPath, master, namespace, annotationFilter, fqdnTemplate, routegroupVersion string, combineFqdnAnnotation, ignoreHostnameAnnotation bool) (source.Source, error) {
 	tmpl, err := parseTemplate(fqdnTemplate)
 	if err != nil {
 		return nil, err
@@ -258,10 +263,10 @@ func (sc *routeGroupSource) Endpoints() ([]*endpoint.Endpoint, error) {
 	endpoints := []*endpoint.Endpoint{}
 	for _, rg := range rgList.Items {
 		// Check controller annotation to see if we are responsible.
-		controller, ok := rg.Metadata.Annotations[controllerAnnotationKey]
-		if ok && controller != controllerAnnotationValue {
+		controller, ok := rg.Metadata.Annotations[source.ControllerAnnotationKey]
+		if ok && controller != source.ControllerAnnotationValue {
 			log.Debugf("Skipping routegroup %s/%s because controller value does not match, found: %s, required: %s",
-				rg.Metadata.Namespace, rg.Metadata.Name, controller, controllerAnnotationValue)
+				rg.Metadata.Namespace, rg.Metadata.Name, controller, source.ControllerAnnotationValue)
 			continue
 		}
 
@@ -309,22 +314,22 @@ func (sc *routeGroupSource) endpointsFromTemplate(rg *routeGroup) ([]*endpoint.E
 	hostnames := buf.String()
 
 	// error handled in endpointsFromRouteGroup(), otherwise duplicate log
-	ttl, _ := getTTLFromAnnotations(rg.Metadata.Annotations)
+	ttl, _ := source.GetTTLFromAnnotations(rg.Metadata.Annotations)
 
-	targets := getTargetsFromTargetAnnotation(rg.Metadata.Annotations)
+	targets := source.GetTargetsFromTargetAnnotation(rg.Metadata.Annotations)
 
 	if len(targets) == 0 {
 		targets = targetsFromRouteGroupStatus(rg.Status)
 	}
 
-	providerSpecific, setIdentifier := getProviderSpecificAnnotations(rg.Metadata.Annotations)
+	providerSpecific, setIdentifier := source.GetProviderSpecificAnnotations(rg.Metadata.Annotations)
 
 	var endpoints []*endpoint.Endpoint
 	// splits the FQDN template and removes the trailing periods
 	hostnameList := strings.Split(strings.Replace(hostnames, " ", "", -1), ",")
 	for _, hostname := range hostnameList {
 		hostname = strings.TrimSuffix(hostname, ".")
-		endpoints = append(endpoints, endpointsForHostname(hostname, targets, ttl, providerSpecific, setIdentifier)...)
+		endpoints = append(endpoints, source.EndpointsForHostname(hostname, targets, ttl, providerSpecific, setIdentifier)...)
 	}
 	return endpoints, nil
 }
@@ -348,12 +353,12 @@ func (sc *routeGroupSource) setRouteGroupDualstackLabel(rg *routeGroup, eps []*e
 // annotation logic ported from source/ingress.go without Spec.TLS part, because it'S not supported in RouteGroup
 func (sc *routeGroupSource) endpointsFromRouteGroup(rg *routeGroup) []*endpoint.Endpoint {
 	endpoints := []*endpoint.Endpoint{}
-	ttl, err := getTTLFromAnnotations(rg.Metadata.Annotations)
+	ttl, err := source.GetTTLFromAnnotations(rg.Metadata.Annotations)
 	if err != nil {
 		log.Warnf("Failed to get TTL from annotation: %v", err)
 	}
 
-	targets := getTargetsFromTargetAnnotation(rg.Metadata.Annotations)
+	targets := source.GetTargetsFromTargetAnnotation(rg.Metadata.Annotations)
 	if len(targets) == 0 {
 		for _, lb := range rg.Status.LoadBalancer.RouteGroup {
 			if lb.IP != "" {
@@ -365,20 +370,20 @@ func (sc *routeGroupSource) endpointsFromRouteGroup(rg *routeGroup) []*endpoint.
 		}
 	}
 
-	providerSpecific, setIdentifier := getProviderSpecificAnnotations(rg.Metadata.Annotations)
+	providerSpecific, setIdentifier := source.GetProviderSpecificAnnotations(rg.Metadata.Annotations)
 
 	for _, src := range rg.Spec.Hosts {
 		if src == "" {
 			continue
 		}
-		endpoints = append(endpoints, endpointsForHostname(src, targets, ttl, providerSpecific, setIdentifier)...)
+		endpoints = append(endpoints, source.EndpointsForHostname(src, targets, ttl, providerSpecific, setIdentifier)...)
 	}
 
 	// Skip endpoints if we do not want entries from annotations
 	if !sc.ignoreHostnameAnnotation {
-		hostnameList := getHostnamesFromAnnotations(rg.Metadata.Annotations)
+		hostnameList := source.GetHostnamesFromAnnotations(rg.Metadata.Annotations)
 		for _, hostname := range hostnameList {
-			endpoints = append(endpoints, endpointsForHostname(hostname, targets, ttl, providerSpecific, setIdentifier)...)
+			endpoints = append(endpoints, source.EndpointsForHostname(hostname, targets, ttl, providerSpecific, setIdentifier)...)
 		}
 	}
 	return endpoints
@@ -386,7 +391,7 @@ func (sc *routeGroupSource) endpointsFromRouteGroup(rg *routeGroup) []*endpoint.
 
 // filterByAnnotations filters a list of routeGroupList by a given annotation selector.
 func (sc *routeGroupSource) filterByAnnotations(rgs *routeGroupList) (*routeGroupList, error) {
-	selector, err := getLabelSelector(sc.annotationFilter)
+	selector, err := source.GetLabelSelector(sc.annotationFilter)
 	if err != nil {
 		return nil, err
 	}
@@ -399,7 +404,7 @@ func (sc *routeGroupSource) filterByAnnotations(rgs *routeGroupList) (*routeGrou
 	var filteredList []*routeGroup
 	for _, rg := range rgs.Items {
 		// include ingress if its annotations match the selector
-		if matchLabelSelector(selector, rg.Metadata.Annotations) {
+		if source.MatchLabelSelector(selector, rg.Metadata.Annotations) {
 			filteredList = append(filteredList, rg)
 		}
 	}

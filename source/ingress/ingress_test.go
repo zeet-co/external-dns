@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package source
+package ingress
 
 import (
 	"testing"
@@ -426,7 +426,7 @@ func testIngressEndpoints(t *testing.T) {
 					name:      "fake1",
 					namespace: namespace,
 					annotations: map[string]string{
-						controllerAnnotationKey: controllerAnnotationValue,
+						source.ControllerAnnotationKey: controllerAnnotationValue,
 					},
 					dnsnames: []string{"example.org"},
 					ips:      []string{"8.8.8.8"},
@@ -447,7 +447,7 @@ func testIngressEndpoints(t *testing.T) {
 					name:      "fake1",
 					namespace: namespace,
 					annotations: map[string]string{
-						controllerAnnotationKey: "some-other-tool",
+						source.ControllerAnnotationKey: "some-other-tool",
 					},
 					dnsnames: []string{"example.org"},
 					ips:      []string{"8.8.8.8"},
@@ -463,7 +463,7 @@ func testIngressEndpoints(t *testing.T) {
 					name:      "fake1",
 					namespace: namespace,
 					annotations: map[string]string{
-						controllerAnnotationKey: controllerAnnotationValue,
+						source.ControllerAnnotationKey: controllerAnnotationValue,
 					},
 					dnsnames:  []string{},
 					ips:       []string{"8.8.8.8"},
@@ -490,7 +490,7 @@ func testIngressEndpoints(t *testing.T) {
 					name:      "fake1",
 					namespace: namespace,
 					annotations: map[string]string{
-						controllerAnnotationKey: "other-controller",
+						source.ControllerAnnotationKey: "other-controller",
 					},
 					dnsnames: []string{},
 					ips:      []string{"8.8.8.8"},

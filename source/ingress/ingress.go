@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package source
+package ingress
 
 import (
 	"bytes"
@@ -35,6 +35,7 @@ import (
 
 	"sigs.k8s.io/external-dns/endpoint"
 	"sigs.k8s.io/external-dns/pkg/k8sutils/async"
+	"sigs.k8s.io/external-dns/source"
 )
 
 const (
@@ -60,7 +61,7 @@ type ingressSource struct {
 }
 
 // NewIngressSource creates a new ingressSource with the given config.
-func NewIngressSource(kubeClient kubernetes.Interface, namespace, annotationFilter string, fqdnTemplate string, combineFqdnAnnotation bool, ignoreHostnameAnnotation bool) (Source, error) {
+func NewIngressSource(kubeClient kubernetes.Interface, namespace, annotationFilter string, fqdnTemplate string, combineFqdnAnnotation bool, ignoreHostnameAnnotation bool) (source.Source, error) {
 	var (
 		tmpl *template.Template
 		err  error
@@ -91,7 +92,7 @@ func NewIngressSource(kubeClient kubernetes.Interface, namespace, annotationFilt
 	informerFactory.Start(wait.NeverStop)
 
 	// wait for the local cache to be populated.
-	err = poll(time.Second, 60*time.Second, func() (bool, error) {
+	err = source.Poll(time.Second, 60*time.Second, func() (bool, error) {
 		return ingressInformer.Informer().HasSynced(), nil
 	})
 	if err != nil {
@@ -126,10 +127,10 @@ func (sc *ingressSource) Endpoints() ([]*endpoint.Endpoint, error) {
 
 	for _, ing := range ingresses {
 		// Check controller annotation to see if we are responsible.
-		controller, ok := ing.Annotations[controllerAnnotationKey]
-		if ok && controller != controllerAnnotationValue {
+		controller, ok := ing.Annotations[source.ControllerAnnotationKey]
+		if ok && controller != source.ControllerAnnotationValue {
 			log.Debugf("Skipping ingress %s/%s because controller value does not match, found: %s, required: %s",
-				ing.Namespace, ing.Name, controller, controllerAnnotationValue)
+				ing.Namespace, ing.Name, controller, source.ControllerAnnotationValue)
 			continue
 		}
 
@@ -177,32 +178,32 @@ func (sc *ingressSource) endpointsFromTemplate(ing *v1beta1.Ingress) ([]*endpoin
 
 	hostnames := buf.String()
 
-	ttl, err := getTTLFromAnnotations(ing.Annotations)
+	ttl, err := source.GetTTLFromAnnotations(ing.Annotations)
 	if err != nil {
 		log.Warn(err)
 	}
 
-	targets := getTargetsFromTargetAnnotation(ing.Annotations)
+	targets := source.GetTargetsFromTargetAnnotation(ing.Annotations)
 
 	if len(targets) == 0 {
 		targets = targetsFromIngressStatus(ing.Status)
 	}
 
-	providerSpecific, setIdentifier := getProviderSpecificAnnotations(ing.Annotations)
+	providerSpecific, setIdentifier := source.GetProviderSpecificAnnotations(ing.Annotations)
 
 	var endpoints []*endpoint.Endpoint
 	// splits the FQDN template and removes the trailing periods
 	hostnameList := strings.Split(strings.Replace(hostnames, " ", "", -1), ",")
 	for _, hostname := range hostnameList {
 		hostname = strings.TrimSuffix(hostname, ".")
-		endpoints = append(endpoints, endpointsForHostname(hostname, targets, ttl, providerSpecific, setIdentifier)...)
+		endpoints = append(endpoints, source.EndpointsForHostname(hostname, targets, ttl, providerSpecific, setIdentifier)...)
 	}
 	return endpoints, nil
 }
 
 // filterByAnnotations filters a list of ingresses by a given annotation selector.
 func (sc *ingressSource) filterByAnnotations(ingresses []*v1beta1.Ingress) ([]*v1beta1.Ingress, error) {
-	selector, err := getLabelSelector(sc.annotationFilter)
+	selector, err := source.GetLabelSelector(sc.annotationFilter)
 	if err != nil {
 		return nil, err
 	}
@@ -216,7 +217,7 @@ func (sc *ingressSource) filterByAnnotations(ingresses []*v1beta1.Ingress) ([]*v
 
 	for _, ingress := range ingresses {
 		// include ingress if its annotations match the selector
-		if matchLabelSelector(selector, ingress.Annotations) {
+		if source.MatchLabelSelector(selector, ingress.Annotations) {
 			filteredList = append(filteredList, ingress)
 		}
 	}
@@ -244,24 +245,24 @@ func (sc *ingressSource) setDualstackLabel(ingress *v1beta1.Ingress, endpoints [
 func endpointsFromIngress(ing *v1beta1.Ingress, ignoreHostnameAnnotation bool) []*endpoint.Endpoint {
 	var endpoints []*endpoint.Endpoint
 
-	ttl, err := getTTLFromAnnotations(ing.Annotations)
+	ttl, err := source.GetTTLFromAnnotations(ing.Annotations)
 	if err != nil {
 		log.Warn(err)
 	}
 
-	targets := getTargetsFromTargetAnnotation(ing.Annotations)
+	targets := source.GetTargetsFromTargetAnnotation(ing.Annotations)
 
 	if len(targets) == 0 {
 		targets = targetsFromIngressStatus(ing.Status)
 	}
 
-	providerSpecific, setIdentifier := getProviderSpecificAnnotations(ing.Annotations)
+	providerSpecific, setIdentifier := source.GetProviderSpecificAnnotations(ing.Annotations)
 
 	for _, rule := range ing.Spec.Rules {
 		if rule.Host == "" {
 			continue
 		}
-		endpoints = append(endpoints, endpointsForHostname(rule.Host, targets, ttl, providerSpecific, setIdentifier)...)
+		endpoints = append(endpoints, source.EndpointsForHostname(rule.Host, targets, ttl, providerSpecific, setIdentifier)...)
 	}
 
 	for _, tls := range ing.Spec.TLS {
@@ -269,15 +270,15 @@ func endpointsFromIngress(ing *v1beta1.Ingress, ignoreHostnameAnnotation bool) [
 			if host == "" {
 				continue
 			}
-			endpoints = append(endpoints, endpointsForHostname(host, targets, ttl, providerSpecific, setIdentifier)...)
+			endpoints = append(endpoints, source.EndpointsForHostname(host, targets, ttl, providerSpecific, setIdentifier)...)
 		}
 	}
 
 	// Skip endpoints if we do not want entries from annotations
 	if !ignoreHostnameAnnotation {
-		hostnameList := getHostnamesFromAnnotations(ing.Annotations)
+		hostnameList := source.GetHostnamesFromAnnotations(ing.Annotations)
 		for _, hostname := range hostnameList {
-			endpoints = append(endpoints, endpointsForHostname(hostname, targets, ttl, providerSpecific, setIdentifier)...)
+			endpoints = append(endpoints, source.EndpointsForHostname(hostname, targets, ttl, providerSpecific, setIdentifier)...)
 		}
 	}
 	return endpoints

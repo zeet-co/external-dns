@@ -14,109 +14,87 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package source
+package istio
 
 import (
-	"context"
 	"testing"
 
 	"github.com/pkg/errors"
-	contour "github.com/projectcontour/contour/apis/contour/v1beta1"
-	projectcontour "github.com/projectcontour/contour/apis/projectcontour/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	networkingv1alpha3api "istio.io/api/networking/v1alpha3"
+	networkingv1alpha3 "istio.io/client-go/pkg/apis/networking/v1alpha3"
+	istioclient "istio.io/client-go/pkg/clientset/versioned"
+	istiofake "istio.io/client-go/pkg/clientset/versioned/fake"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
-	fakeDynamic "k8s.io/client-go/dynamic/fake"
-	fakeKube "k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/kubernetes/fake"
 
 	"sigs.k8s.io/external-dns/endpoint"
 )
 
-// This is a compile-time validation that ingressRouteSource is a Source.
-var _ Source = &ingressRouteSource{}
+// This is a compile-time validation that gatewaySource is a Source.
+var _ Source = &gatewaySource{}
 
-type IngressRouteSuite struct {
+type GatewaySuite struct {
 	suite.Suite
-	source       Source
-	loadBalancer *v1.Service
-	ingressRoute *contour.IngressRoute
+	source     Source
+	lbServices []*v1.Service
 }
 
-func (suite *IngressRouteSuite) SetupTest() {
-	fakeKubernetesClient := fakeKube.NewSimpleClientset()
-	fakeDynamicClient, s := newDynamicKubernetesClient()
+func (suite *GatewaySuite) SetupTest() {
+	fakeKubernetesClient := fake.NewSimpleClientset()
+	fakeIstioClient := NewFakeConfigStore()
 	var err error
 
-	suite.loadBalancer = (fakeLoadBalancerService{
-		ips:       []string{"8.8.8.8"},
-		hostnames: []string{"v1"},
-		namespace: "heptio-contour/contour",
-		name:      "contour",
-	}).Service()
+	suite.lbServices = []*v1.Service{
+		(fakeIngressGatewayService{
+			ips:       []string{"8.8.8.8"},
+			hostnames: []string{"v1"},
+			namespace: "istio-system",
+			name:      "istio-gateway1",
+		}).Service(),
+		(fakeIngressGatewayService{
+			ips:       []string{"1.1.1.1"},
+			hostnames: []string{"v42"},
+			namespace: "istio-other",
+			name:      "istio-gateway2",
+		}).Service(),
+	}
 
-	_, err = fakeKubernetesClient.CoreV1().Services(suite.loadBalancer.Namespace).Create(suite.loadBalancer)
-	suite.NoError(err, "should succeed")
+	for _, service := range suite.lbServices {
+		_, err = fakeKubernetesClient.CoreV1().Services(service.Namespace).Create(service)
+		suite.NoError(err, "should succeed")
+	}
 
-	suite.source, err = NewContourIngressRouteSource(
-		fakeDynamicClient,
+	suite.source, err = NewIstioGatewaySource(
 		fakeKubernetesClient,
-		"heptio-contour/contour",
-		"default",
+		fakeIstioClient,
+		"",
 		"",
 		"{{.Name}}",
 		false,
 		false,
 	)
-	suite.NoError(err, "should initialize ingressroute source")
-
-	suite.ingressRoute = (fakeIngressRoute{
-		name:      "foo-ingressroute-with-targets",
-		namespace: "default",
-		host:      "example.com",
-	}).IngressRoute()
-
-	// Convert to unstructured
-	unstructuredIngressRoute, err := convertToUnstructured(suite.ingressRoute, s)
-	if err != nil {
-		suite.Error(err)
-	}
-
-	_, err = fakeDynamicClient.Resource(contour.IngressRouteGVR).Namespace(suite.ingressRoute.Namespace).Create(unstructuredIngressRoute, metav1.CreateOptions{})
+	suite.NoError(err, "should initialize gateway source")
 	suite.NoError(err, "should succeed")
 }
 
-func (suite *IngressRouteSuite) TestResourceLabelIsSet() {
+func (suite *GatewaySuite) TestResourceLabelIsSet() {
 	endpoints, _ := suite.source.Endpoints()
 	for _, ep := range endpoints {
-		suite.Equal("ingressroute/default/foo-ingressroute-with-targets", ep.Labels[endpoint.ResourceLabelKey], "should set correct resource label")
+		suite.Equal("gateway/default/foo-gateway-with-targets", ep.Labels[endpoint.ResourceLabelKey], "should set correct resource label")
 	}
 }
 
-func newDynamicKubernetesClient() (*fakeDynamic.FakeDynamicClient, *runtime.Scheme) {
-	s := runtime.NewScheme()
-	contour.AddKnownTypes(s)
-	return fakeDynamic.NewSimpleDynamicClient(s), s
+func TestGateway(t *testing.T) {
+	suite.Run(t, new(GatewaySuite))
+	t.Run("endpointsFromGatewayConfig", testEndpointsFromGatewayConfig)
+	t.Run("Endpoints", testGatewayEndpoints)
 }
 
-func convertToUnstructured(ir *contour.IngressRoute, s *runtime.Scheme) (*unstructured.Unstructured, error) {
-	unstructuredIngressRoute := &unstructured.Unstructured{}
-	if err := s.Convert(ir, unstructuredIngressRoute, context.TODO()); err != nil {
-		return nil, err
-	}
-	return unstructuredIngressRoute, nil
-}
-
-func TestIngressRoute(t *testing.T) {
-	suite.Run(t, new(IngressRouteSuite))
-	t.Run("endpointsFromIngressRoute", testEndpointsFromIngressRoute)
-	t.Run("Endpoints", testIngressRouteEndpoints)
-}
-
-func TestNewContourIngressRouteSource(t *testing.T) {
+func TestNewIstioGatewaySource(t *testing.T) {
 	for _, ti := range []struct {
 		title                    string
 		annotationFilter         string
@@ -152,16 +130,13 @@ func TestNewContourIngressRouteSource(t *testing.T) {
 		{
 			title:            "non-empty annotation filter label",
 			expectError:      false,
-			annotationFilter: "contour.heptio.com/ingress.class=contour",
+			annotationFilter: "kubernetes.io/gateway.class=nginx",
 		},
 	} {
 		t.Run(ti.title, func(t *testing.T) {
-			fakeDynamicClient, _ := newDynamicKubernetesClient()
-
-			_, err := NewContourIngressRouteSource(
-				fakeDynamicClient,
-				fakeKube.NewSimpleClientset(),
-				"heptio-contour/contour",
+			_, err := NewIstioGatewaySource(
+				fake.NewSimpleClientset(),
+				NewFakeConfigStore(),
 				"",
 				ti.annotationFilter,
 				ti.fqdnTemplate,
@@ -177,20 +152,43 @@ func TestNewContourIngressRouteSource(t *testing.T) {
 	}
 }
 
-func testEndpointsFromIngressRoute(t *testing.T) {
+func testEndpointsFromGatewayConfig(t *testing.T) {
 	for _, ti := range []struct {
-		title        string
-		loadBalancer fakeLoadBalancerService
-		ingressRoute fakeIngressRoute
-		expected     []*endpoint.Endpoint
+		title      string
+		lbServices []fakeIngressGatewayService
+		config     fakeGatewayConfig
+		expected   []*endpoint.Endpoint
 	}{
 		{
 			title: "one rule.host one lb.hostname",
-			loadBalancer: fakeLoadBalancerService{
-				hostnames: []string{"lb.com"}, // Kubernetes omits the trailing dot
+			lbServices: []fakeIngressGatewayService{
+				{
+					hostnames: []string{"lb.com"}, // Kubernetes omits the trailing dot
+				},
 			},
-			ingressRoute: fakeIngressRoute{
-				host: "foo.bar", // Kubernetes requires removal of trailing dot
+			config: fakeGatewayConfig{
+				dnsnames: [][]string{
+					{"foo.bar"}, // Kubernetes requires removal of trailing dot
+				},
+			},
+			expected: []*endpoint.Endpoint{
+				{
+					DNSName: "foo.bar",
+					Targets: endpoint.Targets{"lb.com"},
+				},
+			},
+		},
+		{
+			title: "one namespaced rule.host one lb.hostname",
+			lbServices: []fakeIngressGatewayService{
+				{
+					hostnames: []string{"lb.com"}, // Kubernetes omits the trailing dot
+				},
+			},
+			config: fakeGatewayConfig{
+				dnsnames: [][]string{
+					{"my-namespace/foo.bar"}, // Kubernetes requires removal of trailing dot
+				},
 			},
 			expected: []*endpoint.Endpoint{
 				{
@@ -201,11 +199,15 @@ func testEndpointsFromIngressRoute(t *testing.T) {
 		},
 		{
 			title: "one rule.host one lb.IP",
-			loadBalancer: fakeLoadBalancerService{
-				ips: []string{"8.8.8.8"},
+			lbServices: []fakeIngressGatewayService{
+				{
+					ips: []string{"8.8.8.8"},
+				},
 			},
-			ingressRoute: fakeIngressRoute{
-				host: "foo.bar",
+			config: fakeGatewayConfig{
+				dnsnames: [][]string{
+					{"foo.bar"},
+				},
 			},
 			expected: []*endpoint.Endpoint{
 				{
@@ -216,12 +218,16 @@ func testEndpointsFromIngressRoute(t *testing.T) {
 		},
 		{
 			title: "one rule.host two lb.IP and two lb.Hostname",
-			loadBalancer: fakeLoadBalancerService{
-				ips:       []string{"8.8.8.8", "127.0.0.1"},
-				hostnames: []string{"elb.com", "alb.com"},
+			lbServices: []fakeIngressGatewayService{
+				{
+					ips:       []string{"8.8.8.8", "127.0.0.1"},
+					hostnames: []string{"elb.com", "alb.com"},
+				},
 			},
-			ingressRoute: fakeIngressRoute{
-				host: "foo.bar",
+			config: fakeGatewayConfig{
+				dnsnames: [][]string{
+					{"foo.bar"},
+				},
 			},
 			expected: []*endpoint.Endpoint{
 				{
@@ -236,46 +242,74 @@ func testEndpointsFromIngressRoute(t *testing.T) {
 		},
 		{
 			title: "no rule.host",
-			loadBalancer: fakeLoadBalancerService{
-				ips:       []string{"8.8.8.8", "127.0.0.1"},
-				hostnames: []string{"elb.com", "alb.com"},
+			lbServices: []fakeIngressGatewayService{
+				{
+					ips:       []string{"8.8.8.8", "127.0.0.1"},
+					hostnames: []string{"elb.com", "alb.com"},
+				},
 			},
-			ingressRoute: fakeIngressRoute{},
-			expected:     []*endpoint.Endpoint{},
-		},
-		{
-			title: "one rule.host invalid ingressroute",
-			loadBalancer: fakeLoadBalancerService{
-				ips:       []string{"8.8.8.8", "127.0.0.1"},
-				hostnames: []string{"elb.com", "alb.com"},
-			},
-			ingressRoute: fakeIngressRoute{
-				host:    "foo.bar",
-				invalid: true,
+			config: fakeGatewayConfig{
+				dnsnames: [][]string{},
 			},
 			expected: []*endpoint.Endpoint{},
 		},
 		{
-			title:        "no targets",
-			loadBalancer: fakeLoadBalancerService{},
-			ingressRoute: fakeIngressRoute{},
-			expected:     []*endpoint.Endpoint{},
-		},
-		{
-			title: "delegate ingressroute",
-			loadBalancer: fakeLoadBalancerService{
-				hostnames: []string{"lb.com"},
+			title: "one empty rule.host",
+			lbServices: []fakeIngressGatewayService{
+				{
+					ips:       []string{"8.8.8.8", "127.0.0.1"},
+					hostnames: []string{"elb.com", "alb.com"},
+				},
 			},
-			ingressRoute: fakeIngressRoute{
-				delegate: true,
+			config: fakeGatewayConfig{
+				dnsnames: [][]string{
+					{""},
+				},
 			},
 			expected: []*endpoint.Endpoint{},
+		},
+		{
+			title:      "no targets",
+			lbServices: []fakeIngressGatewayService{{}},
+			config: fakeGatewayConfig{
+				dnsnames: [][]string{
+					{""},
+				},
+			},
+			expected: []*endpoint.Endpoint{},
+		},
+		{
+			title: "one gateway, two ingressgateway loadbalancer hostnames",
+			lbServices: []fakeIngressGatewayService{
+				{
+					hostnames: []string{"lb.com"},
+					namespace: "istio-other",
+					name:      "gateway1",
+				},
+				{
+					hostnames: []string{"lb2.com"},
+					namespace: "istio-other",
+					name:      "gateway2",
+				},
+			},
+			config: fakeGatewayConfig{
+				dnsnames: [][]string{
+					{"foo.bar"}, // Kubernetes requires removal of trailing dot
+				},
+			},
+			expected: []*endpoint.Endpoint{
+				{
+					DNSName: "foo.bar",
+					Targets: endpoint.Targets{"lb.com", "lb2.com"},
+				},
+			},
 		},
 	} {
 		t.Run(ti.title, func(t *testing.T) {
-			if source, err := newTestIngressRouteSource(ti.loadBalancer); err != nil {
+			gatewayCfg := ti.config.Config()
+			if source, err := newTestGatewaySource(ti.lbServices); err != nil {
 				require.NoError(t, err)
-			} else if endpoints, err := source.endpointsFromIngressRoute(ti.ingressRoute.IngressRoute()); err != nil {
+			} else if endpoints, err := source.endpointsFromGatewayConfig(*gatewayCfg); err != nil {
 				require.NoError(t, err)
 			} else {
 				validateEndpoints(t, endpoints, ti.expected)
@@ -284,14 +318,13 @@ func testEndpointsFromIngressRoute(t *testing.T) {
 	}
 }
 
-func testIngressRouteEndpoints(t *testing.T) {
-	namespace := "testing"
+func testGatewayEndpoints(t *testing.T) {
 	for _, ti := range []struct {
 		title                    string
 		targetNamespace          string
 		annotationFilter         string
-		loadBalancer             fakeLoadBalancerService
-		ingressRouteItems        []fakeIngressRoute
+		lbServices               []fakeIngressGatewayService
+		configItems              []fakeGatewayConfig
 		expected                 []*endpoint.Endpoint
 		expectError              bool
 		fqdnTemplate             string
@@ -299,26 +332,28 @@ func testIngressRouteEndpoints(t *testing.T) {
 		ignoreHostnameAnnotation bool
 	}{
 		{
-			title:           "no ingressroute",
+			title:           "no gateway",
 			targetNamespace: "",
 		},
 		{
-			title:           "two simple ingressroutes",
+			title:           "two simple gateways, one ingressgateway loadbalancer service",
 			targetNamespace: "",
-			loadBalancer: fakeLoadBalancerService{
-				ips:       []string{"8.8.8.8"},
-				hostnames: []string{"lb.com"},
+			lbServices: []fakeIngressGatewayService{
+				{
+					ips:       []string{"8.8.8.8"},
+					hostnames: []string{"lb.com"},
+				},
 			},
-			ingressRouteItems: []fakeIngressRoute{
+			configItems: []fakeGatewayConfig{
 				{
 					name:      "fake1",
-					namespace: namespace,
-					host:      "example.org",
+					namespace: "",
+					dnsnames:  [][]string{{"example.org"}},
 				},
 				{
 					name:      "fake2",
-					namespace: namespace,
-					host:      "new.org",
+					namespace: "",
+					dnsnames:  [][]string{{"new.org"}},
 				},
 			},
 			expected: []*endpoint.Endpoint{
@@ -341,22 +376,24 @@ func testIngressRouteEndpoints(t *testing.T) {
 			},
 		},
 		{
-			title:           "two simple ingressroutes on different namespaces",
+			title:           "two simple gateways on different namespaces, one ingressgateway loadbalancer service",
 			targetNamespace: "",
-			loadBalancer: fakeLoadBalancerService{
-				ips:       []string{"8.8.8.8"},
-				hostnames: []string{"lb.com"},
+			lbServices: []fakeIngressGatewayService{
+				{
+					ips:       []string{"8.8.8.8"},
+					hostnames: []string{"lb.com"},
+				},
 			},
-			ingressRouteItems: []fakeIngressRoute{
+			configItems: []fakeGatewayConfig{
 				{
 					name:      "fake1",
-					namespace: "testing1",
-					host:      "example.org",
+					namespace: "",
+					dnsnames:  [][]string{{"example.org"}},
 				},
 				{
 					name:      "fake2",
-					namespace: "testing2",
-					host:      "new.org",
+					namespace: "",
+					dnsnames:  [][]string{{"new.org"}},
 				},
 			},
 			expected: []*endpoint.Endpoint{
@@ -379,22 +416,20 @@ func testIngressRouteEndpoints(t *testing.T) {
 			},
 		},
 		{
-			title:           "two simple ingressroutes on different namespaces and a target namespace",
+			title:           "two simple gateways on different namespaces and a target namespace, one ingressgateway loadbalancer service",
 			targetNamespace: "testing1",
-			loadBalancer: fakeLoadBalancerService{
-				ips:       []string{"8.8.8.8"},
-				hostnames: []string{"lb.com"},
+			lbServices: []fakeIngressGatewayService{
+				{
+					ips:       []string{"8.8.8.8"},
+					hostnames: []string{"lb.com"},
+					namespace: "testing1",
+				},
 			},
-			ingressRouteItems: []fakeIngressRoute{
+			configItems: []fakeGatewayConfig{
 				{
 					name:      "fake1",
 					namespace: "testing1",
-					host:      "example.org",
-				},
-				{
-					name:      "fake2",
-					namespace: "testing2",
-					host:      "new.org",
+					dnsnames:  [][]string{{"example.org"}},
 				},
 			},
 			expected: []*endpoint.Endpoint{
@@ -411,18 +446,20 @@ func testIngressRouteEndpoints(t *testing.T) {
 		{
 			title:            "valid matching annotation filter expression",
 			targetNamespace:  "",
-			annotationFilter: "contour.heptio.com/ingress.class in (alb, contour)",
-			loadBalancer: fakeLoadBalancerService{
-				ips: []string{"8.8.8.8"},
+			annotationFilter: "kubernetes.io/gateway.class in (alb, nginx)",
+			lbServices: []fakeIngressGatewayService{
+				{
+					ips: []string{"8.8.8.8"},
+				},
 			},
-			ingressRouteItems: []fakeIngressRoute{
+			configItems: []fakeGatewayConfig{
 				{
 					name:      "fake1",
-					namespace: namespace,
+					namespace: "",
 					annotations: map[string]string{
-						"contour.heptio.com/ingress.class": "contour",
+						"kubernetes.io/gateway.class": "nginx",
 					},
-					host: "example.org",
+					dnsnames: [][]string{{"example.org"}},
 				},
 			},
 			expected: []*endpoint.Endpoint{
@@ -435,18 +472,20 @@ func testIngressRouteEndpoints(t *testing.T) {
 		{
 			title:            "valid non-matching annotation filter expression",
 			targetNamespace:  "",
-			annotationFilter: "contour.heptio.com/ingress.class in (alb, contour)",
-			loadBalancer: fakeLoadBalancerService{
-				ips: []string{"8.8.8.8"},
+			annotationFilter: "kubernetes.io/gateway.class in (alb, nginx)",
+			lbServices: []fakeIngressGatewayService{
+				{
+					ips: []string{"8.8.8.8"},
+				},
 			},
-			ingressRouteItems: []fakeIngressRoute{
+			configItems: []fakeGatewayConfig{
 				{
 					name:      "fake1",
-					namespace: namespace,
+					namespace: "",
 					annotations: map[string]string{
-						"contour.heptio.com/ingress.class": "tectonic",
+						"kubernetes.io/gateway.class": "tectonic",
 					},
-					host: "example.org",
+					dnsnames: [][]string{{"example.org"}},
 				},
 			},
 			expected: []*endpoint.Endpoint{},
@@ -454,18 +493,20 @@ func testIngressRouteEndpoints(t *testing.T) {
 		{
 			title:            "invalid annotation filter expression",
 			targetNamespace:  "",
-			annotationFilter: "contour.heptio.com/ingress.name in (a b)",
-			loadBalancer: fakeLoadBalancerService{
-				ips: []string{"8.8.8.8"},
+			annotationFilter: "kubernetes.io/gateway.name in (a b)",
+			lbServices: []fakeIngressGatewayService{
+				{
+					ips: []string{"8.8.8.8"},
+				},
 			},
-			ingressRouteItems: []fakeIngressRoute{
+			configItems: []fakeGatewayConfig{
 				{
 					name:      "fake1",
-					namespace: namespace,
+					namespace: "",
 					annotations: map[string]string{
-						"contour.heptio.com/ingress.class": "alb",
+						"kubernetes.io/gateway.class": "alb",
 					},
-					host: "example.org",
+					dnsnames: [][]string{{"example.org"}},
 				},
 			},
 			expected:    []*endpoint.Endpoint{},
@@ -474,18 +515,20 @@ func testIngressRouteEndpoints(t *testing.T) {
 		{
 			title:            "valid matching annotation filter label",
 			targetNamespace:  "",
-			annotationFilter: "contour.heptio.com/ingress.class=contour",
-			loadBalancer: fakeLoadBalancerService{
-				ips: []string{"8.8.8.8"},
+			annotationFilter: "kubernetes.io/gateway.class=nginx",
+			lbServices: []fakeIngressGatewayService{
+				{
+					ips: []string{"8.8.8.8"},
+				},
 			},
-			ingressRouteItems: []fakeIngressRoute{
+			configItems: []fakeGatewayConfig{
 				{
 					name:      "fake1",
-					namespace: namespace,
+					namespace: "",
 					annotations: map[string]string{
-						"contour.heptio.com/ingress.class": "contour",
+						"kubernetes.io/gateway.class": "nginx",
 					},
-					host: "example.org",
+					dnsnames: [][]string{{"example.org"}},
 				},
 			},
 			expected: []*endpoint.Endpoint{
@@ -498,18 +541,20 @@ func testIngressRouteEndpoints(t *testing.T) {
 		{
 			title:            "valid non-matching annotation filter label",
 			targetNamespace:  "",
-			annotationFilter: "contour.heptio.com/ingress.class=contour",
-			loadBalancer: fakeLoadBalancerService{
-				ips: []string{"8.8.8.8"},
+			annotationFilter: "kubernetes.io/gateway.class=nginx",
+			lbServices: []fakeIngressGatewayService{
+				{
+					ips: []string{"8.8.8.8"},
+				},
 			},
-			ingressRouteItems: []fakeIngressRoute{
+			configItems: []fakeGatewayConfig{
 				{
 					name:      "fake1",
-					namespace: namespace,
+					namespace: "",
 					annotations: map[string]string{
-						"contour.heptio.com/ingress.class": "alb",
+						"kubernetes.io/gateway.class": "alb",
 					},
-					host: "example.org",
+					dnsnames: [][]string{{"example.org"}},
 				},
 			},
 			expected: []*endpoint.Endpoint{},
@@ -517,17 +562,19 @@ func testIngressRouteEndpoints(t *testing.T) {
 		{
 			title:           "our controller type is dns-controller",
 			targetNamespace: "",
-			loadBalancer: fakeLoadBalancerService{
-				ips: []string{"8.8.8.8"},
+			lbServices: []fakeIngressGatewayService{
+				{
+					ips: []string{"8.8.8.8"},
+				},
 			},
-			ingressRouteItems: []fakeIngressRoute{
+			configItems: []fakeGatewayConfig{
 				{
 					name:      "fake1",
-					namespace: namespace,
+					namespace: "",
 					annotations: map[string]string{
-						controllerAnnotationKey: controllerAnnotationValue,
+						source.ControllerAnnotationKey: controllerAnnotationValue,
 					},
-					host: "example.org",
+					dnsnames: [][]string{{"example.org"}},
 				},
 			},
 			expected: []*endpoint.Endpoint{
@@ -540,36 +587,40 @@ func testIngressRouteEndpoints(t *testing.T) {
 		{
 			title:           "different controller types are ignored",
 			targetNamespace: "",
-			loadBalancer: fakeLoadBalancerService{
-				ips: []string{"8.8.8.8"},
+			lbServices: []fakeIngressGatewayService{
+				{
+					ips: []string{"8.8.8.8"},
+				},
 			},
-			ingressRouteItems: []fakeIngressRoute{
+			configItems: []fakeGatewayConfig{
 				{
 					name:      "fake1",
-					namespace: namespace,
+					namespace: "",
 					annotations: map[string]string{
-						controllerAnnotationKey: "some-other-tool",
+						source.ControllerAnnotationKey: "some-other-tool",
 					},
-					host: "example.org",
+					dnsnames: [][]string{{"example.org"}},
 				},
 			},
 			expected: []*endpoint.Endpoint{},
 		},
 		{
-			title:           "template for ingressroute if host is missing",
+			title:           "template for gateway if host is missing",
 			targetNamespace: "",
-			loadBalancer: fakeLoadBalancerService{
-				ips:       []string{"8.8.8.8"},
-				hostnames: []string{"elb.com"},
+			lbServices: []fakeIngressGatewayService{
+				{
+					ips:       []string{"8.8.8.8"},
+					hostnames: []string{"elb.com"},
+				},
 			},
-			ingressRouteItems: []fakeIngressRoute{
+			configItems: []fakeGatewayConfig{
 				{
 					name:      "fake1",
-					namespace: namespace,
+					namespace: "",
 					annotations: map[string]string{
-						controllerAnnotationKey: controllerAnnotationValue,
+						source.ControllerAnnotationKey: controllerAnnotationValue,
 					},
-					host: "",
+					dnsnames: [][]string{},
 				},
 			},
 			expected: []*endpoint.Endpoint{
@@ -587,17 +638,19 @@ func testIngressRouteEndpoints(t *testing.T) {
 		{
 			title:           "another controller annotation skipped even with template",
 			targetNamespace: "",
-			loadBalancer: fakeLoadBalancerService{
-				ips: []string{"8.8.8.8"},
+			lbServices: []fakeIngressGatewayService{
+				{
+					ips: []string{"8.8.8.8"},
+				},
 			},
-			ingressRouteItems: []fakeIngressRoute{
+			configItems: []fakeGatewayConfig{
 				{
 					name:      "fake1",
-					namespace: namespace,
+					namespace: "",
 					annotations: map[string]string{
-						controllerAnnotationKey: "other-controller",
+						source.ControllerAnnotationKey: "other-controller",
 					},
-					host: "",
+					dnsnames: [][]string{},
 				},
 			},
 			expected:     []*endpoint.Endpoint{},
@@ -606,15 +659,17 @@ func testIngressRouteEndpoints(t *testing.T) {
 		{
 			title:           "multiple FQDN template hostnames",
 			targetNamespace: "",
-			loadBalancer: fakeLoadBalancerService{
-				ips: []string{"8.8.8.8"},
+			lbServices: []fakeIngressGatewayService{
+				{
+					ips: []string{"8.8.8.8"},
+				},
 			},
-			ingressRouteItems: []fakeIngressRoute{
+			configItems: []fakeGatewayConfig{
 				{
 					name:        "fake1",
-					namespace:   namespace,
+					namespace:   "",
 					annotations: map[string]string{},
-					host:        "",
+					dnsnames:    [][]string{},
 				},
 			},
 			expected: []*endpoint.Endpoint{
@@ -634,23 +689,25 @@ func testIngressRouteEndpoints(t *testing.T) {
 		{
 			title:           "multiple FQDN template hostnames",
 			targetNamespace: "",
-			loadBalancer: fakeLoadBalancerService{
-				ips: []string{"8.8.8.8"},
+			lbServices: []fakeIngressGatewayService{
+				{
+					ips: []string{"8.8.8.8"},
+				},
 			},
-			ingressRouteItems: []fakeIngressRoute{
+			configItems: []fakeGatewayConfig{
 				{
 					name:        "fake1",
-					namespace:   namespace,
+					namespace:   "",
 					annotations: map[string]string{},
-					host:        "",
+					dnsnames:    [][]string{},
 				},
 				{
 					name:      "fake2",
-					namespace: namespace,
+					namespace: "",
 					annotations: map[string]string{
-						targetAnnotationKey: "ingressroute-target.com",
+						targetAnnotationKey: "gateway-target.com",
 					},
-					host: "example.org",
+					dnsnames: [][]string{{"example.org"}},
 				},
 			},
 			expected: []*endpoint.Endpoint{
@@ -666,17 +723,17 @@ func testIngressRouteEndpoints(t *testing.T) {
 				},
 				{
 					DNSName:    "example.org",
-					Targets:    endpoint.Targets{"ingressroute-target.com"},
+					Targets:    endpoint.Targets{"gateway-target.com"},
 					RecordType: endpoint.RecordTypeCNAME,
 				},
 				{
 					DNSName:    "fake2.ext-dns.test.com",
-					Targets:    endpoint.Targets{"ingressroute-target.com"},
+					Targets:    endpoint.Targets{"gateway-target.com"},
 					RecordType: endpoint.RecordTypeCNAME,
 				},
 				{
 					DNSName:    "fake2.ext-dna.test.com",
-					Targets:    endpoint.Targets{"ingressroute-target.com"},
+					Targets:    endpoint.Targets{"gateway-target.com"},
 					RecordType: endpoint.RecordTypeCNAME,
 				},
 			},
@@ -684,46 +741,48 @@ func testIngressRouteEndpoints(t *testing.T) {
 			combineFQDNAndAnnotation: true,
 		},
 		{
-			title:           "ingressroute rules with annotation",
+			title:           "gateway rules with annotation",
 			targetNamespace: "",
-			loadBalancer: fakeLoadBalancerService{
-				ips: []string{"8.8.8.8"},
+			lbServices: []fakeIngressGatewayService{
+				{
+					ips: []string{"8.8.8.8"},
+				},
 			},
-			ingressRouteItems: []fakeIngressRoute{
+			configItems: []fakeGatewayConfig{
 				{
 					name:      "fake1",
-					namespace: namespace,
+					namespace: "",
 					annotations: map[string]string{
-						targetAnnotationKey: "ingressroute-target.com",
+						targetAnnotationKey: "gateway-target.com",
 					},
-					host: "example.org",
+					dnsnames: [][]string{{"example.org"}},
 				},
 				{
 					name:      "fake2",
-					namespace: namespace,
+					namespace: "",
 					annotations: map[string]string{
-						targetAnnotationKey: "ingressroute-target.com",
+						targetAnnotationKey: "gateway-target.com",
 					},
-					host: "example2.org",
+					dnsnames: [][]string{{"example2.org"}},
 				},
 				{
 					name:      "fake3",
-					namespace: namespace,
+					namespace: "",
 					annotations: map[string]string{
 						targetAnnotationKey: "1.2.3.4",
 					},
-					host: "example3.org",
+					dnsnames: [][]string{{"example3.org"}},
 				},
 			},
 			expected: []*endpoint.Endpoint{
 				{
 					DNSName:    "example.org",
-					Targets:    endpoint.Targets{"ingressroute-target.com"},
+					Targets:    endpoint.Targets{"gateway-target.com"},
 					RecordType: endpoint.RecordTypeCNAME,
 				},
 				{
 					DNSName:    "example2.org",
-					Targets:    endpoint.Targets{"ingressroute-target.com"},
+					Targets:    endpoint.Targets{"gateway-target.com"},
 					RecordType: endpoint.RecordTypeCNAME,
 				},
 				{
@@ -734,19 +793,21 @@ func testIngressRouteEndpoints(t *testing.T) {
 			},
 		},
 		{
-			title:           "ingressroute rules with hostname annotation",
+			title:           "gateway rules with hostname annotation",
 			targetNamespace: "",
-			loadBalancer: fakeLoadBalancerService{
-				ips: []string{"1.2.3.4"},
+			lbServices: []fakeIngressGatewayService{
+				{
+					ips: []string{"1.2.3.4"},
+				},
 			},
-			ingressRouteItems: []fakeIngressRoute{
+			configItems: []fakeGatewayConfig{
 				{
 					name:      "fake1",
-					namespace: namespace,
+					namespace: "",
 					annotations: map[string]string{
 						hostnameAnnotationKey: "dns-through-hostname.com",
 					},
-					host: "example.org",
+					dnsnames: [][]string{{"example.org"}},
 				},
 			},
 			expected: []*endpoint.Endpoint{
@@ -763,19 +824,21 @@ func testIngressRouteEndpoints(t *testing.T) {
 			},
 		},
 		{
-			title:           "ingressroute rules with hostname annotation having multiple hostnames",
+			title:           "gateway rules with hostname annotation having multiple hostnames",
 			targetNamespace: "",
-			loadBalancer: fakeLoadBalancerService{
-				ips: []string{"1.2.3.4"},
+			lbServices: []fakeIngressGatewayService{
+				{
+					ips: []string{"1.2.3.4"},
+				},
 			},
-			ingressRouteItems: []fakeIngressRoute{
+			configItems: []fakeGatewayConfig{
 				{
 					name:      "fake1",
-					namespace: namespace,
+					namespace: "",
 					annotations: map[string]string{
 						hostnameAnnotationKey: "dns-through-hostname.com, another-dns-through-hostname.com",
 					},
-					host: "example.org",
+					dnsnames: [][]string{{"example.org"}},
 				},
 			},
 			expected: []*endpoint.Endpoint{
@@ -797,130 +860,136 @@ func testIngressRouteEndpoints(t *testing.T) {
 			},
 		},
 		{
-			title:           "ingressroute rules with hostname and target annotation",
+			title:           "gateway rules with hostname and target annotation",
 			targetNamespace: "",
-			loadBalancer: fakeLoadBalancerService{
-				ips: []string{},
+			lbServices: []fakeIngressGatewayService{
+				{
+					ips: []string{},
+				},
 			},
-			ingressRouteItems: []fakeIngressRoute{
+			configItems: []fakeGatewayConfig{
 				{
 					name:      "fake1",
-					namespace: namespace,
+					namespace: "",
 					annotations: map[string]string{
 						hostnameAnnotationKey: "dns-through-hostname.com",
-						targetAnnotationKey:   "ingressroute-target.com",
+						targetAnnotationKey:   "gateway-target.com",
 					},
-					host: "example.org",
+					dnsnames: [][]string{{"example.org"}},
 				},
 			},
 			expected: []*endpoint.Endpoint{
 				{
 					DNSName:    "example.org",
-					Targets:    endpoint.Targets{"ingressroute-target.com"},
+					Targets:    endpoint.Targets{"gateway-target.com"},
 					RecordType: endpoint.RecordTypeCNAME,
 				},
 				{
 					DNSName:    "dns-through-hostname.com",
-					Targets:    endpoint.Targets{"ingressroute-target.com"},
+					Targets:    endpoint.Targets{"gateway-target.com"},
 					RecordType: endpoint.RecordTypeCNAME,
 				},
 			},
 		},
 		{
-			title:           "ingressroute rules with annotation and custom TTL",
+			title:           "gateway rules with annotation and custom TTL",
 			targetNamespace: "",
-			loadBalancer: fakeLoadBalancerService{
-				ips: []string{"8.8.8.8"},
+			lbServices: []fakeIngressGatewayService{
+				{
+					ips: []string{"8.8.8.8"},
+				},
 			},
-			ingressRouteItems: []fakeIngressRoute{
+			configItems: []fakeGatewayConfig{
 				{
 					name:      "fake1",
-					namespace: namespace,
+					namespace: "",
 					annotations: map[string]string{
-						targetAnnotationKey: "ingressroute-target.com",
+						targetAnnotationKey: "gateway-target.com",
 						ttlAnnotationKey:    "6",
 					},
-					host: "example.org",
+					dnsnames: [][]string{{"example.org"}},
 				},
 				{
 					name:      "fake2",
-					namespace: namespace,
+					namespace: "",
 					annotations: map[string]string{
-						targetAnnotationKey: "ingressroute-target.com",
+						targetAnnotationKey: "gateway-target.com",
 						ttlAnnotationKey:    "1",
 					},
-					host: "example2.org",
+					dnsnames: [][]string{{"example2.org"}},
 				},
 				{
 					name:      "fake3",
-					namespace: namespace,
+					namespace: "",
 					annotations: map[string]string{
-						targetAnnotationKey: "ingressroute-target.com",
+						targetAnnotationKey: "gateway-target.com",
 						ttlAnnotationKey:    "10s",
 					},
-					host: "example3.org",
+					dnsnames: [][]string{{"example3.org"}},
 				},
 			},
 			expected: []*endpoint.Endpoint{
 				{
 					DNSName:   "example.org",
-					Targets:   endpoint.Targets{"ingressroute-target.com"},
+					Targets:   endpoint.Targets{"gateway-target.com"},
 					RecordTTL: endpoint.TTL(6),
 				},
 				{
 					DNSName:   "example2.org",
-					Targets:   endpoint.Targets{"ingressroute-target.com"},
+					Targets:   endpoint.Targets{"gateway-target.com"},
 					RecordTTL: endpoint.TTL(1),
 				},
 				{
 					DNSName:   "example3.org",
-					Targets:   endpoint.Targets{"ingressroute-target.com"},
+					Targets:   endpoint.Targets{"gateway-target.com"},
 					RecordTTL: endpoint.TTL(10),
 				},
 			},
 		},
 		{
-			title:           "template for ingressroute with annotation",
+			title:           "template for gateway with annotation",
 			targetNamespace: "",
-			loadBalancer: fakeLoadBalancerService{
-				ips:       []string{},
-				hostnames: []string{},
+			lbServices: []fakeIngressGatewayService{
+				{
+					ips:       []string{},
+					hostnames: []string{},
+				},
 			},
-			ingressRouteItems: []fakeIngressRoute{
+			configItems: []fakeGatewayConfig{
 				{
 					name:      "fake1",
-					namespace: namespace,
+					namespace: "",
 					annotations: map[string]string{
-						targetAnnotationKey: "ingressroute-target.com",
+						targetAnnotationKey: "gateway-target.com",
 					},
-					host: "",
+					dnsnames: [][]string{},
 				},
 				{
 					name:      "fake2",
-					namespace: namespace,
+					namespace: "",
 					annotations: map[string]string{
-						targetAnnotationKey: "ingressroute-target.com",
+						targetAnnotationKey: "gateway-target.com",
 					},
-					host: "",
+					dnsnames: [][]string{},
 				},
 				{
 					name:      "fake3",
-					namespace: namespace,
+					namespace: "",
 					annotations: map[string]string{
 						targetAnnotationKey: "1.2.3.4",
 					},
-					host: "",
+					dnsnames: [][]string{},
 				},
 			},
 			expected: []*endpoint.Endpoint{
 				{
 					DNSName:    "fake1.ext-dns.test.com",
-					Targets:    endpoint.Targets{"ingressroute-target.com"},
+					Targets:    endpoint.Targets{"gateway-target.com"},
 					RecordType: endpoint.RecordTypeCNAME,
 				},
 				{
 					DNSName:    "fake2.ext-dns.test.com",
-					Targets:    endpoint.Targets{"ingressroute-target.com"},
+					Targets:    endpoint.Targets{"gateway-target.com"},
 					RecordType: endpoint.RecordTypeCNAME,
 				},
 				{
@@ -932,20 +1001,22 @@ func testIngressRouteEndpoints(t *testing.T) {
 			fqdnTemplate: "{{.Name}}.ext-dns.test.com",
 		},
 		{
-			title:           "ingressroute with empty annotation",
+			title:           "Ingress with empty annotation",
 			targetNamespace: "",
-			loadBalancer: fakeLoadBalancerService{
-				ips:       []string{},
-				hostnames: []string{},
+			lbServices: []fakeIngressGatewayService{
+				{
+					ips:       []string{},
+					hostnames: []string{},
+				},
 			},
-			ingressRouteItems: []fakeIngressRoute{
+			configItems: []fakeGatewayConfig{
 				{
 					name:      "fake1",
-					namespace: namespace,
+					namespace: "",
 					annotations: map[string]string{
 						targetAnnotationKey: "",
 					},
-					host: "",
+					dnsnames: [][]string{},
 				},
 			},
 			expected:     []*endpoint.Endpoint{},
@@ -954,26 +1025,28 @@ func testIngressRouteEndpoints(t *testing.T) {
 		{
 			title:           "ignore hostname annotations",
 			targetNamespace: "",
-			loadBalancer: fakeLoadBalancerService{
-				ips:       []string{"8.8.8.8"},
-				hostnames: []string{"lb.com"},
+			lbServices: []fakeIngressGatewayService{
+				{
+					ips:       []string{"8.8.8.8"},
+					hostnames: []string{"lb.com"},
+				},
 			},
-			ingressRouteItems: []fakeIngressRoute{
+			configItems: []fakeGatewayConfig{
 				{
 					name:      "fake1",
-					namespace: namespace,
+					namespace: "",
 					annotations: map[string]string{
 						hostnameAnnotationKey: "ignore.me",
 					},
-					host: "example.org",
+					dnsnames: [][]string{{"example.org"}},
 				},
 				{
 					name:      "fake2",
-					namespace: namespace,
+					namespace: "",
 					annotations: map[string]string{
 						hostnameAnnotationKey: "ignore.me.too",
 					},
-					host: "new.org",
+					dnsnames: [][]string{{"new.org"}},
 				},
 			},
 			expected: []*endpoint.Endpoint{
@@ -998,31 +1071,25 @@ func testIngressRouteEndpoints(t *testing.T) {
 		},
 	} {
 		t.Run(ti.title, func(t *testing.T) {
-			ingressRoutes := make([]*contour.IngressRoute, 0)
-			for _, item := range ti.ingressRouteItems {
-				ingressRoutes = append(ingressRoutes, item.IngressRoute())
-			}
 
-			fakeKubernetesClient := fakeKube.NewSimpleClientset()
+			fakeKubernetesClient := fake.NewSimpleClientset()
 
-			lbService := ti.loadBalancer.Service()
-			_, err := fakeKubernetesClient.CoreV1().Services(lbService.Namespace).Create(lbService)
-			if err != nil {
+			for _, lb := range ti.lbServices {
+				service := lb.Service()
+				_, err := fakeKubernetesClient.CoreV1().Services(service.Namespace).Create(service)
 				require.NoError(t, err)
 			}
 
-			fakeDynamicClient, scheme := newDynamicKubernetesClient()
-			for _, ingressRoute := range ingressRoutes {
-				converted, err := convertToUnstructured(ingressRoute, scheme)
-				require.NoError(t, err)
-				_, err = fakeDynamicClient.Resource(contour.IngressRouteGVR).Namespace(ingressRoute.Namespace).Create(converted, metav1.CreateOptions{})
+			fakeIstioClient := NewFakeConfigStore()
+			for _, config := range ti.configItems {
+				gatewayCfg := config.Config()
+				_, err := fakeIstioClient.NetworkingV1alpha3().Gateways(ti.targetNamespace).Create(gatewayCfg)
 				require.NoError(t, err)
 			}
 
-			ingressRouteSource, err := NewContourIngressRouteSource(
-				fakeDynamicClient,
+			gatewaySource, err := NewIstioGatewaySource(
 				fakeKubernetesClient,
-				lbService.Namespace+"/"+lbService.Name,
+				fakeIstioClient,
 				ti.targetNamespace,
 				ti.annotationFilter,
 				ti.fqdnTemplate,
@@ -1031,7 +1098,7 @@ func testIngressRouteEndpoints(t *testing.T) {
 			)
 			require.NoError(t, err)
 
-			res, err := ingressRouteSource.Endpoints()
+			res, err := gatewaySource.Endpoints()
 			if ti.expectError {
 				assert.Error(t, err)
 			} else {
@@ -1043,22 +1110,23 @@ func testIngressRouteEndpoints(t *testing.T) {
 	}
 }
 
-// ingressroute specific helper functions
-func newTestIngressRouteSource(loadBalancer fakeLoadBalancerService) (*ingressRouteSource, error) {
-	fakeKubernetesClient := fakeKube.NewSimpleClientset()
-	fakeDynamicClient, _ := newDynamicKubernetesClient()
+// gateway specific helper functions
+func newTestGatewaySource(loadBalancerList []fakeIngressGatewayService) (*gatewaySource, error) {
+	fakeKubernetesClient := fake.NewSimpleClientset()
+	fakeIstioClient := NewFakeConfigStore()
 
-	lbService := loadBalancer.Service()
-	_, err := fakeKubernetesClient.CoreV1().Services(lbService.Namespace).Create(lbService)
-	if err != nil {
-		return nil, err
+	for _, lb := range loadBalancerList {
+		service := lb.Service()
+		_, err := fakeKubernetesClient.CoreV1().Services(service.Namespace).Create(service)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	src, err := NewContourIngressRouteSource(
-		fakeDynamicClient,
+	src, err := NewIstioGatewaySource(
 		fakeKubernetesClient,
-		lbService.Namespace+"/"+lbService.Name,
-		"default",
+		fakeIstioClient,
+		"",
 		"",
 		"{{.Name}}",
 		false,
@@ -1068,22 +1136,22 @@ func newTestIngressRouteSource(loadBalancer fakeLoadBalancerService) (*ingressRo
 		return nil, err
 	}
 
-	irsrc, ok := src.(*ingressRouteSource)
+	gwsrc, ok := src.(*gatewaySource)
 	if !ok {
-		return nil, errors.New("underlying source type was not ingressroute")
+		return nil, errors.New("underlying source type was not gateway")
 	}
 
-	return irsrc, nil
+	return gwsrc, nil
 }
 
-type fakeLoadBalancerService struct {
+type fakeIngressGatewayService struct {
 	ips       []string
 	hostnames []string
 	namespace string
 	name      string
 }
 
-func (ig fakeLoadBalancerService) Service() *v1.Service {
+func (ig fakeIngressGatewayService) Service() *v1.Service {
 	svc := &v1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: ig.namespace,
@@ -1110,46 +1178,39 @@ func (ig fakeLoadBalancerService) Service() *v1.Service {
 	return svc
 }
 
-type fakeIngressRoute struct {
+type fakeGatewayConfig struct {
 	namespace   string
 	name        string
 	annotations map[string]string
-
-	host     string
-	invalid  bool
-	delegate bool
+	dnsnames    [][]string
+	selector    map[string]string
 }
 
-func (ir fakeIngressRoute) IngressRoute() *contour.IngressRoute {
-	var status string
-	if ir.invalid {
-		status = "invalid"
-	} else {
-		status = "valid"
-	}
-
-	var spec contour.IngressRouteSpec
-	if ir.delegate {
-		spec = contour.IngressRouteSpec{}
-	} else {
-		spec = contour.IngressRouteSpec{
-			VirtualHost: &projectcontour.VirtualHost{
-				Fqdn: ir.host,
-			},
-		}
-	}
-
-	ingressRoute := &contour.IngressRoute{
+func (c fakeGatewayConfig) Config() *networkingv1alpha3.Gateway {
+	gw := networkingv1alpha3.Gateway{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace:   ir.namespace,
-			Name:        ir.name,
-			Annotations: ir.annotations,
+			Name:        c.name,
+			Namespace:   c.namespace,
+			Annotations: c.annotations,
 		},
-		Spec: spec,
-		Status: projectcontour.Status{
-			CurrentStatus: status,
+		Spec: networkingv1alpha3api.Gateway{
+			Servers:  nil,
+			Selector: c.selector,
 		},
 	}
 
-	return ingressRoute
+	var servers []*networkingv1alpha3api.Server
+	for _, dnsnames := range c.dnsnames {
+		servers = append(servers, &networkingv1alpha3api.Server{
+			Hosts: dnsnames,
+		})
+	}
+
+	gw.Spec.Servers = servers
+
+	return &gw
+}
+
+func NewFakeConfigStore() istioclient.Interface {
+	return istiofake.NewSimpleClientset()
 }

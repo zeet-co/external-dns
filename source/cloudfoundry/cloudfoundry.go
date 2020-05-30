@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package source
+package cloudfoundry
 
 import (
 	"net/url"
@@ -23,6 +23,7 @@ import (
 	cfclient "github.com/cloudfoundry-community/go-cfclient"
 
 	"sigs.k8s.io/external-dns/endpoint"
+	"sigs.k8s.io/external-dns/source"
 )
 
 type cloudfoundrySource struct {
@@ -30,7 +31,7 @@ type cloudfoundrySource struct {
 }
 
 // NewCloudFoundrySource creates a new cloudfoundrySource with the given config
-func NewCloudFoundrySource(cfClient *cfclient.Client) (Source, error) {
+func NewCloudFoundrySource(cfClient *cfclient.Client) (source.Source, error) {
 	return &cloudfoundrySource{
 		client: cfClient,
 	}, nil

@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package source
+package node
 
 import (
 	"bytes"
@@ -34,6 +34,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 
 	"sigs.k8s.io/external-dns/endpoint"
+	"sigs.k8s.io/external-dns/source"
 )
 
 type nodeSource struct {
@@ -44,7 +45,7 @@ type nodeSource struct {
 }
 
 // NewNodeSource creates a new nodeSource with the given config.
-func NewNodeSource(kubeClient kubernetes.Interface, annotationFilter, fqdnTemplate string) (Source, error) {
+func NewNodeSource(kubeClient kubernetes.Interface, annotationFilter, fqdnTemplate string) (source.Source, error) {
 	var (
 		tmpl *template.Template
 		err  error
@@ -77,7 +78,7 @@ func NewNodeSource(kubeClient kubernetes.Interface, annotationFilter, fqdnTempla
 	informerFactory.Start(wait.NeverStop)
 
 	// wait for the local cache to be populated.
-	err = poll(time.Second, 60*time.Second, func() (bool, error) {
+	err = source.Poll(time.Second, 60*time.Second, func() (bool, error) {
 		return nodeInformer.Informer().HasSynced(), nil
 	})
 	if err != nil {
@@ -109,16 +110,16 @@ func (ns *nodeSource) Endpoints() ([]*endpoint.Endpoint, error) {
 	// create endpoints for all nodes
 	for _, node := range nodes {
 		// Check controller annotation to see if we are responsible.
-		controller, ok := node.Annotations[controllerAnnotationKey]
-		if ok && controller != controllerAnnotationValue {
+		controller, ok := node.Annotations[source.ControllerAnnotationKey]
+		if ok && controller != source.ControllerAnnotationValue {
 			log.Debugf("Skipping node %s because controller value does not match, found: %s, required: %s",
-				node.Name, controller, controllerAnnotationValue)
+				node.Name, controller, source.ControllerAnnotationValue)
 			continue
 		}
 
 		log.Debugf("creating endpoint for node %s", node.Name)
 
-		ttl, err := getTTLFromAnnotations(node.Annotations)
+		ttl, err := source.GetTTLFromAnnotations(node.Annotations)
 		if err != nil {
 			log.Warn(err)
 		}

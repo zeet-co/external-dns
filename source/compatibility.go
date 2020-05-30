@@ -29,22 +29,22 @@ const (
 	moleculeAnnotationKey = "domainName"
 )
 
-// legacyEndpointsFromService tries to retrieve Endpoints from Services
+// LegacyEndpointsFromService tries to retrieve Endpoints from Services
 // annotated with legacy annotations.
-func legacyEndpointsFromService(svc *v1.Service, compatibility string) []*endpoint.Endpoint {
+func LegacyEndpointsFromService(svc *v1.Service, compatibility string) []*endpoint.Endpoint {
 	switch compatibility {
 	case "mate":
-		return legacyEndpointsFromMateService(svc)
+		return LegacyEndpointsFromMateService(svc)
 	case "molecule":
-		return legacyEndpointsFromMoleculeService(svc)
+		return LegacyEndpointsFromMoleculeService(svc)
 	}
 
 	return []*endpoint.Endpoint{}
 }
 
-// legacyEndpointsFromMateService tries to retrieve Endpoints from Services
+// LegacyEndpointsFromMateService tries to retrieve Endpoints from Services
 // annotated with Mate's annotation semantics.
-func legacyEndpointsFromMateService(svc *v1.Service) []*endpoint.Endpoint {
+func LegacyEndpointsFromMateService(svc *v1.Service) []*endpoint.Endpoint {
 	var endpoints []*endpoint.Endpoint
 
 	// Get the desired hostname of the service from the annotation.
@@ -66,9 +66,9 @@ func legacyEndpointsFromMateService(svc *v1.Service) []*endpoint.Endpoint {
 	return endpoints
 }
 
-// legacyEndpointsFromMoleculeService tries to retrieve Endpoints from Services
+// LegacyEndpointsFromMoleculeService tries to retrieve Endpoints from Services
 // annotated with Molecule Software's annotation semantics.
-func legacyEndpointsFromMoleculeService(svc *v1.Service) []*endpoint.Endpoint {
+func LegacyEndpointsFromMoleculeService(svc *v1.Service) []*endpoint.Endpoint {
 	var endpoints []*endpoint.Endpoint
 
 	// Check that the Service opted-in to being processed.

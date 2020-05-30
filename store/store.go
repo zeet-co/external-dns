@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package source
+package store
 
 import (
 	"net/http"
@@ -33,6 +33,13 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"sigs.k8s.io/external-dns/source"
+	"sigs.k8s.io/external-dns/source/cloudfoundry"
+	"sigs.k8s.io/external-dns/source/ingress"
+	"sigs.k8s.io/external-dns/source/ingressroute"
+	"sigs.k8s.io/external-dns/source/istio"
+	"sigs.k8s.io/external-dns/source/node"
+	"sigs.k8s.io/external-dns/source/service"
 )
 
 // ErrSourceNotFound is returned when a requested source doesn't exist.
@@ -152,8 +159,8 @@ func (p *SingletonClientGenerator) OpenShiftClient() (openshift.Interface, error
 }
 
 // ByNames returns multiple Sources given multiple names.
-func ByNames(p ClientGenerator, names []string, cfg *Config) ([]Source, error) {
-	sources := []Source{}
+func ByNames(p ClientGenerator, names []string, cfg *Config) ([]source.Source, error) {
+	sources := []source.Source{}
 	for _, name := range names {
 		source, err := BuildWithConfig(name, p, cfg)
 		if err != nil {
@@ -166,26 +173,26 @@ func ByNames(p ClientGenerator, names []string, cfg *Config) ([]Source, error) {
 }
 
 // BuildWithConfig allows to generate a Source implementation from the shared config
-func BuildWithConfig(source string, p ClientGenerator, cfg *Config) (Source, error) {
+func BuildWithConfig(source string, p ClientGenerator, cfg *Config) (source.Source, error) {
 	switch source {
 	case "node":
 		client, err := p.KubeClient()
 		if err != nil {
 			return nil, err
 		}
-		return NewNodeSource(client, cfg.AnnotationFilter, cfg.FQDNTemplate)
+		return node.NewNodeSource(client, cfg.AnnotationFilter, cfg.FQDNTemplate)
 	case "service":
 		client, err := p.KubeClient()
 		if err != nil {
 			return nil, err
 		}
-		return NewServiceSource(client, cfg.Namespace, cfg.AnnotationFilter, cfg.FQDNTemplate, cfg.CombineFQDNAndAnnotation, cfg.Compatibility, cfg.PublishInternal, cfg.PublishHostIP, cfg.AlwaysPublishNotReadyAddresses, cfg.ServiceTypeFilter, cfg.IgnoreHostnameAnnotation)
+		return service.NewServiceSource(client, cfg.Namespace, cfg.AnnotationFilter, cfg.FQDNTemplate, cfg.CombineFQDNAndAnnotation, cfg.Compatibility, cfg.PublishInternal, cfg.PublishHostIP, cfg.AlwaysPublishNotReadyAddresses, cfg.ServiceTypeFilter, cfg.IgnoreHostnameAnnotation)
 	case "ingress":
 		client, err := p.KubeClient()
 		if err != nil {
 			return nil, err
 		}
-		return NewIngressSource(client, cfg.Namespace, cfg.AnnotationFilter, cfg.FQDNTemplate, cfg.CombineFQDNAndAnnotation, cfg.IgnoreHostnameAnnotation)
+		return ingress.NewIngressSource(client, cfg.Namespace, cfg.AnnotationFilter, cfg.FQDNTemplate, cfg.CombineFQDNAndAnnotation, cfg.IgnoreHostnameAnnotation)
 	case "istio-gateway":
 		kubernetesClient, err := p.KubeClient()
 		if err != nil {
@@ -195,13 +202,13 @@ func BuildWithConfig(source string, p ClientGenerator, cfg *Config) (Source, err
 		if err != nil {
 			return nil, err
 		}
-		return NewIstioGatewaySource(kubernetesClient, istioClient, cfg.Namespace, cfg.AnnotationFilter, cfg.FQDNTemplate, cfg.CombineFQDNAndAnnotation, cfg.IgnoreHostnameAnnotation)
+		return istio.NewIstioGatewaySource(kubernetesClient, istioClient, cfg.Namespace, cfg.AnnotationFilter, cfg.FQDNTemplate, cfg.CombineFQDNAndAnnotation, cfg.IgnoreHostnameAnnotation)
 	case "cloudfoundry":
 		cfClient, err := p.CloudFoundryClient(cfg.CFAPIEndpoint, cfg.CFUsername, cfg.CFPassword)
 		if err != nil {
 			return nil, err
 		}
-		return NewCloudFoundrySource(cfClient)
+		return cloudfoundry.NewCloudFoundrySource(cfClient)
 	case "contour-ingressroute":
 		kubernetesClient, err := p.KubeClient()
 		if err != nil {
@@ -211,38 +218,38 @@ func BuildWithConfig(source string, p ClientGenerator, cfg *Config) (Source, err
 		if err != nil {
 			return nil, err
 		}
-		return NewContourIngressRouteSource(dynamicClient, kubernetesClient, cfg.ContourLoadBalancerService, cfg.Namespace, cfg.AnnotationFilter, cfg.FQDNTemplate, cfg.CombineFQDNAndAnnotation, cfg.IgnoreHostnameAnnotation)
-	case "openshift-route":
-		ocpClient, err := p.OpenShiftClient()
-		if err != nil {
-			return nil, err
-		}
-		return NewOcpRouteSource(ocpClient, cfg.Namespace, cfg.AnnotationFilter, cfg.FQDNTemplate, cfg.CombineFQDNAndAnnotation, cfg.IgnoreHostnameAnnotation)
-	case "fake":
-		return NewFakeSource(cfg.FQDNTemplate)
-	case "connector":
-		return NewConnectorSource(cfg.ConnectorServer)
-	case "crd":
-		client, err := p.KubeClient()
-		if err != nil {
-			return nil, err
-		}
-		crdClient, scheme, err := NewCRDClientForAPIVersionKind(client, cfg.KubeConfig, cfg.KubeMaster, cfg.CRDSourceAPIVersion, cfg.CRDSourceKind)
-		if err != nil {
-			return nil, err
-		}
-		return NewCRDSource(crdClient, cfg.Namespace, cfg.CRDSourceKind, cfg.AnnotationFilter, scheme)
-	case "skipper-routegroup":
-		master := cfg.KubeMaster
-		tokenPath := ""
-		token := ""
-		restConfig, err := GetRestConfig(cfg.KubeConfig, cfg.KubeMaster)
-		if err == nil {
-			master = restConfig.Host
-			tokenPath = restConfig.BearerTokenFile
-			token = restConfig.BearerToken
-		}
-		return NewRouteGroupSource(cfg.RequestTimeout, token, tokenPath, master, cfg.Namespace, cfg.AnnotationFilter, cfg.FQDNTemplate, cfg.SkipperRouteGroupVersion, cfg.CombineFQDNAndAnnotation, cfg.IgnoreHostnameAnnotation)
+		return ingressroute.NewContourIngressRouteSource(dynamicClient, kubernetesClient, cfg.ContourLoadBalancerService, cfg.Namespace, cfg.AnnotationFilter, cfg.FQDNTemplate, cfg.CombineFQDNAndAnnotation, cfg.IgnoreHostnameAnnotation)
+		// case "openshift-route":
+		// 	ocpClient, err := p.OpenShiftClient()
+		// 	if err != nil {
+		// 		return nil, err
+		// 	}
+		// 	return NewOcpRouteSource(ocpClient, cfg.Namespace, cfg.AnnotationFilter, cfg.FQDNTemplate, cfg.CombineFQDNAndAnnotation, cfg.IgnoreHostnameAnnotation)
+		// 	// case "fake":
+		// 	return NewFakeSource(cfg.FQDNTemplate)
+		// case "connector":
+		// 	return NewConnectorSource(cfg.ConnectorServer)
+		// case "crd":
+		// 	client, err := p.KubeClient()
+		// 	if err != nil {
+		// 		return nil, err
+		// 	}
+		// 	crdClient, scheme, err := NewCRDClientForAPIVersionKind(client, cfg.KubeConfig, cfg.KubeMaster, cfg.CRDSourceAPIVersion, cfg.CRDSourceKind)
+		// 	if err != nil {
+		// 		return nil, err
+		// 	}
+		// 	return NewCRDSource(crdClient, cfg.Namespace, cfg.CRDSourceKind, cfg.AnnotationFilter, scheme)
+		// case "skipper-routegroup":
+		// 	master := cfg.KubeMaster
+		// 	tokenPath := ""
+		// 	token := ""
+		// 	restConfig, err := GetRestConfig(cfg.KubeConfig, cfg.KubeMaster)
+		// 	if err == nil {
+		// 		master = restConfig.Host
+		// 		tokenPath = restConfig.BearerTokenFile
+		// 		token = restConfig.BearerToken
+		// 	}
+		// 	return NewRouteGroupSource(cfg.RequestTimeout, token, tokenPath, master, cfg.Namespace, cfg.AnnotationFilter, cfg.FQDNTemplate, cfg.SkipperRouteGroupVersion, cfg.CombineFQDNAndAnnotation, cfg.IgnoreHostnameAnnotation)
 	}
 	return nil, ErrSourceNotFound
 }

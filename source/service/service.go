@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package source
+package service
 
 import (
 	"bytes"
@@ -36,6 +36,7 @@ import (
 
 	"sigs.k8s.io/external-dns/endpoint"
 	"sigs.k8s.io/external-dns/pkg/k8sutils/async"
+	"sigs.k8s.io/external-dns/source"
 )
 
 const (
@@ -69,7 +70,7 @@ type serviceSource struct {
 }
 
 // NewServiceSource creates a new serviceSource with the given config.
-func NewServiceSource(kubeClient kubernetes.Interface, namespace, annotationFilter string, fqdnTemplate string, combineFqdnAnnotation bool, compatibility string, publishInternal bool, publishHostIP bool, alwaysPublishNotReadyAddresses bool, serviceTypeFilter []string, ignoreHostnameAnnotation bool) (Source, error) {
+func NewServiceSource(kubeClient kubernetes.Interface, namespace, annotationFilter string, fqdnTemplate string, combineFqdnAnnotation bool, compatibility string, publishInternal bool, publishHostIP bool, alwaysPublishNotReadyAddresses bool, serviceTypeFilter []string, ignoreHostnameAnnotation bool) (source.Source, error) {
 	var (
 		tmpl *template.Template
 		err  error
@@ -121,7 +122,7 @@ func NewServiceSource(kubeClient kubernetes.Interface, namespace, annotationFilt
 	informerFactory.Start(wait.NeverStop)
 
 	// wait for the local cache to be populated.
-	err = poll(time.Second, 60*time.Second, func() (bool, error) {
+	err = source.Poll(time.Second, 60*time.Second, func() (bool, error) {
 		return serviceInformer.Informer().HasSynced() &&
 			endpointsInformer.Informer().HasSynced() &&
 			podInformer.Informer().HasSynced() &&
@@ -177,10 +178,10 @@ func (sc *serviceSource) Endpoints() ([]*endpoint.Endpoint, error) {
 
 	for _, svc := range services {
 		// Check controller annotation to see if we are responsible.
-		controller, ok := svc.Annotations[controllerAnnotationKey]
-		if ok && controller != controllerAnnotationValue {
+		controller, ok := svc.Annotations[source.ControllerAnnotationKey]
+		if ok && controller != source.ControllerAnnotationValue {
 			log.Debugf("Skipping service %s/%s because controller value does not match, found: %s, required: %s",
-				svc.Namespace, svc.Name, controller, controllerAnnotationValue)
+				svc.Namespace, svc.Name, controller, source.ControllerAnnotationValue)
 			continue
 		}
 
@@ -188,7 +189,7 @@ func (sc *serviceSource) Endpoints() ([]*endpoint.Endpoint, error) {
 
 		// process legacy annotations if no endpoints were returned and compatibility mode is enabled.
 		if len(svcEndpoints) == 0 && sc.compatibility != "" {
-			svcEndpoints = legacyEndpointsFromService(svc, sc.compatibility)
+			svcEndpoints = source.LegacyEndpointsFromService(svc, sc.compatibility)
 		}
 
 		// apply template if none of the above is found
@@ -331,7 +332,7 @@ func (sc *serviceSource) endpointsFromTemplate(svc *v1.Service) ([]*endpoint.End
 		return nil, fmt.Errorf("failed to apply template on service %s: %v", svc.String(), err)
 	}
 
-	providerSpecific, setIdentifier := getProviderSpecificAnnotations(svc.Annotations)
+	providerSpecific, setIdentifier := source.GetProviderSpecificAnnotations(svc.Annotations)
 	hostnameList := strings.Split(strings.Replace(buf.String(), " ", "", -1), ",")
 	for _, hostname := range hostnameList {
 		endpoints = append(endpoints, sc.generateEndpoints(svc, hostname, providerSpecific, setIdentifier)...)
@@ -345,8 +346,8 @@ func (sc *serviceSource) endpoints(svc *v1.Service) []*endpoint.Endpoint {
 	var endpoints []*endpoint.Endpoint
 	// Skip endpoints if we do not want entries from annotations
 	if !sc.ignoreHostnameAnnotation {
-		providerSpecific, setIdentifier := getProviderSpecificAnnotations(svc.Annotations)
-		hostnameList := getHostnamesFromAnnotations(svc.Annotations)
+		providerSpecific, setIdentifier := source.GetProviderSpecificAnnotations(svc.Annotations)
+		hostnameList := source.GetHostnamesFromAnnotations(svc.Annotations)
 		for _, hostname := range hostnameList {
 			endpoints = append(endpoints, sc.generateEndpoints(svc, hostname, providerSpecific, setIdentifier)...)
 		}
@@ -406,7 +407,7 @@ func (sc *serviceSource) setResourceLabel(service *v1.Service, endpoints []*endp
 
 func (sc *serviceSource) generateEndpoints(svc *v1.Service, hostname string, providerSpecific endpoint.ProviderSpecific, setIdentifier string) []*endpoint.Endpoint {
 	hostname = strings.TrimSuffix(hostname, ".")
-	ttl, err := getTTLFromAnnotations(svc.Annotations)
+	ttl, err := source.GetTTLFromAnnotations(svc.Annotations)
 	if err != nil {
 		log.Warn(err)
 	}
@@ -453,10 +454,10 @@ func (sc *serviceSource) generateEndpoints(svc *v1.Service, hostname string, pro
 	}
 
 	for _, t := range targets {
-		if suitableType(t) == endpoint.RecordTypeA {
+		if source.SuitableType(t) == endpoint.RecordTypeA {
 			epA.Targets = append(epA.Targets, t)
 		}
-		if suitableType(t) == endpoint.RecordTypeCNAME {
+		if source.SuitableType(t) == endpoint.RecordTypeCNAME {
 			epCNAME.Targets = append(epCNAME.Targets, t)
 		}
 	}

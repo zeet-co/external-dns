@@ -33,7 +33,7 @@ import (
 
 const (
 	// The annotation used for figuring out which controller is responsible
-	controllerAnnotationKey = "external-dns.alpha.kubernetes.io/controller"
+	ControllerAnnotationKey = "external-dns.alpha.kubernetes.io/controller"
 	// The annotation used for defining the desired hostname
 	hostnameAnnotationKey = "external-dns.alpha.kubernetes.io/hostname"
 	// The annotation used for defining the desired ingress target
@@ -43,7 +43,7 @@ const (
 	// The annotation used for switching to the alias record types e. g. AWS Alias records instead of a normal CNAME
 	aliasAnnotationKey = "external-dns.alpha.kubernetes.io/alias"
 	// The value of the controller annotation so that we feel responsible
-	controllerAnnotationValue = "dns-controller"
+	ControllerAnnotationValue = "dns-controller"
 )
 
 // Provider-specific annotations
@@ -67,7 +67,7 @@ type Source interface {
 	AddEventHandler(func() error, <-chan struct{}, time.Duration)
 }
 
-func getTTLFromAnnotations(annotations map[string]string) (endpoint.TTL, error) {
+func GetTTLFromAnnotations(annotations map[string]string) (endpoint.TTL, error) {
 	ttlNotConfigured := endpoint.TTL(0)
 	ttlAnnotation, exists := annotations[ttlAnnotationKey]
 	if !exists {
@@ -98,7 +98,7 @@ func parseTTL(s string) (ttlSeconds int64, err error) {
 	return int64(ttlDuration.Seconds()), nil
 }
 
-func getHostnamesFromAnnotations(annotations map[string]string) []string {
+func GetHostnamesFromAnnotations(annotations map[string]string) []string {
 	hostnameAnnotation, exists := annotations[hostnameAnnotationKey]
 	if !exists {
 		return nil
@@ -111,7 +111,7 @@ func getAliasFromAnnotations(annotations map[string]string) bool {
 	return exists && aliasAnnotation == "true"
 }
 
-func getProviderSpecificAnnotations(annotations map[string]string) (endpoint.ProviderSpecific, string) {
+func GetProviderSpecificAnnotations(annotations map[string]string) (endpoint.ProviderSpecific, string) {
 	providerSpecificAnnotations := endpoint.ProviderSpecific{}
 
 	v, exists := annotations[CloudflareProxiedKey]
@@ -144,7 +144,7 @@ func getProviderSpecificAnnotations(annotations map[string]string) (endpoint.Pro
 
 // getTargetsFromTargetAnnotation gets endpoints from optional "target" annotation.
 // Returns empty endpoints array if none are found.
-func getTargetsFromTargetAnnotation(annotations map[string]string) endpoint.Targets {
+func GetTargetsFromTargetAnnotation(annotations map[string]string) endpoint.Targets {
 	var targets endpoint.Targets
 
 	// Get the desired hostname of the ingress from the annotation.
@@ -160,24 +160,24 @@ func getTargetsFromTargetAnnotation(annotations map[string]string) endpoint.Targ
 	return targets
 }
 
-// suitableType returns the DNS resource record type suitable for the target.
+// SuitableType returns the DNS resource record type suitable for the target.
 // In this case type A for IPs and type CNAME for everything else.
-func suitableType(target string) string {
+func SuitableType(target string) string {
 	if net.ParseIP(target) != nil {
 		return endpoint.RecordTypeA
 	}
 	return endpoint.RecordTypeCNAME
 }
 
-// endpointsForHostname returns the endpoint objects for each host-target combination.
-func endpointsForHostname(hostname string, targets endpoint.Targets, ttl endpoint.TTL, providerSpecific endpoint.ProviderSpecific, setIdentifier string) []*endpoint.Endpoint {
+// EndpointsForHostname returns the endpoint objects for each host-target combination.
+func EndpointsForHostname(hostname string, targets endpoint.Targets, ttl endpoint.TTL, providerSpecific endpoint.ProviderSpecific, setIdentifier string) []*endpoint.Endpoint {
 	var endpoints []*endpoint.Endpoint
 
 	var aTargets endpoint.Targets
 	var cnameTargets endpoint.Targets
 
 	for _, t := range targets {
-		switch suitableType(t) {
+		switch SuitableType(t) {
 		case endpoint.RecordTypeA:
 			aTargets = append(aTargets, t)
 		default:
@@ -214,7 +214,7 @@ func endpointsForHostname(hostname string, targets endpoint.Targets, ttl endpoin
 	return endpoints
 }
 
-func getLabelSelector(annotationFilter string) (labels.Selector, error) {
+func GetLabelSelector(annotationFilter string) (labels.Selector, error) {
 	labelSelector, err := metav1.ParseToLabelSelector(annotationFilter)
 	if err != nil {
 		return nil, err
@@ -222,12 +222,12 @@ func getLabelSelector(annotationFilter string) (labels.Selector, error) {
 	return metav1.LabelSelectorAsSelector(labelSelector)
 }
 
-func matchLabelSelector(selector labels.Selector, srcAnnotations map[string]string) bool {
+func MatchLabelSelector(selector labels.Selector, srcAnnotations map[string]string) bool {
 	annotations := labels.Set(srcAnnotations)
 	return selector.Matches(annotations)
 }
 
-func poll(interval time.Duration, timeout time.Duration, condition wait.ConditionFunc) error {
+func Poll(interval time.Duration, timeout time.Duration, condition wait.ConditionFunc) error {
 	if config.FAST_POLL {
 		time.Sleep(5 * time.Millisecond)
 

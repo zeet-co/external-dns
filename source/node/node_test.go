@@ -1,4 +1,4 @@
-package source
+package node
 
 import (
 	"testing"
@@ -227,7 +227,7 @@ func testNodeSourceEndpoints(t *testing.T) {
 			[]v1.NodeAddress{{Type: v1.NodeExternalIP, Address: "1.2.3.4"}},
 			map[string]string{},
 			map[string]string{
-				controllerAnnotationKey: controllerAnnotationValue,
+				source.ControllerAnnotationKey: controllerAnnotationValue,
 			},
 			[]*endpoint.Endpoint{
 				{RecordType: "A", DNSName: "node1", Targets: endpoint.Targets{"1.2.3.4"}},
@@ -242,7 +242,7 @@ func testNodeSourceEndpoints(t *testing.T) {
 			[]v1.NodeAddress{{Type: v1.NodeExternalIP, Address: "1.2.3.4"}},
 			map[string]string{},
 			map[string]string{
-				controllerAnnotationKey: "not-dns-controller",
+				source.ControllerAnnotationKey: "not-dns-controller",
 			},
 			[]*endpoint.Endpoint{},
 			false,
