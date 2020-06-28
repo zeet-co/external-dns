@@ -29,14 +29,15 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 
 	"sigs.k8s.io/external-dns/endpoint"
+	"sigs.k8s.io/external-dns/source/test"
 )
 
 // Validates that ingressSource is a Source
-var _ Source = &ingressSource{}
+var _ source.Source = &ingressSource{}
 
 type IngressSuite struct {
 	suite.Suite
-	sc             Source
+	sc             source.Source
 	fooWithTargets *v1beta1.Ingress
 }
 
@@ -220,7 +221,7 @@ func testEndpointsFromIngress(t *testing.T) {
 	} {
 		t.Run(ti.title, func(t *testing.T) {
 			realIngress := ti.ingress.Ingress()
-			validateEndpoints(t, endpointsFromIngress(realIngress, false), ti.expected)
+			test.ValidateEndpoints(t, endpointsFromIngress(realIngress, false), ti.expected)
 		})
 	}
 }
