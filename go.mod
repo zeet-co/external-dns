@@ -3,7 +3,7 @@ module sigs.k8s.io/external-dns
 go 1.15
 
 require (
-	cloud.google.com/go v0.50.0
+	cloud.google.com/go v0.51.0
 	git.blindage.org/21h/hcloud-dns v0.0.0-20200807003420-f768ffe03f8d
 	github.com/Azure/azure-sdk-for-go v45.1.0+incompatible
 	github.com/Azure/go-autorest/autorest v0.11.10
@@ -55,7 +55,7 @@ require (
 	github.com/vultr/govultr v0.4.2
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20200401174654-e694b7bb0875
 	go.uber.org/ratelimit v0.1.0
-	golang.org/x/net v0.0.0-20200625001655-4c5254603344
+	golang.org/x/net v0.0.0-20200707034311-ab3426394381
 	golang.org/x/oauth2 v0.0.0-20200107190931-bf48bf16ab8d
 	golang.org/x/tools v0.0.0-20200708003708-134513de8882 // indirect
 	google.golang.org/api v0.15.0
@@ -64,9 +64,9 @@ require (
 	honnef.co/go/tools v0.0.1-2020.1.4 // indirect
 	istio.io/api v0.0.0-20200529165953-72dad51d4ffc
 	istio.io/client-go v0.0.0-20200529172309-31c16ea3f751
-	k8s.io/api v0.18.8
-	k8s.io/apimachinery v0.18.8
-	k8s.io/client-go v0.18.8
+	k8s.io/api v0.19.0
+	k8s.io/apimachinery v0.19.0
+	k8s.io/client-go v0.19.0
 	k8s.io/kubernetes v1.13.0
 )
 
