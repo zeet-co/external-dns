@@ -14,7 +14,7 @@ require (
 	github.com/StackExchange/dnscontrol v0.2.8
 	github.com/akamai/AkamaiOPEN-edgegrid-golang v1.2.1
 	github.com/alecthomas/kingpin v2.2.5+incompatible
-	github.com/aliyun/alibaba-cloud-sdk-go v1.62.4
+	github.com/aliyun/alibaba-cloud-sdk-go v1.62.139
 	github.com/ans-group/sdk-go v1.10.4
 	github.com/aws/aws-sdk-go v1.44.136
 	github.com/bodgit/tsig v1.2.0
